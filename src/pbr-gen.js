@@ -371,35 +371,39 @@ function diamondPlate(S = 512) {
   return finish(m, 5);
 }
 
-// Wrinkled, wet, veined flesh. Veins are written to the emissive channel. Tile = 0.8 m.
+// Wrinkled, wet skin with branching veins and pores. Veins go to the emissive channel. Tile = 0.8 m.
 function flesh(S = 512, seed = 81) {
   const m = new Maps(S);
   const n = makeNoise(seed, 16);
-  const w = makeNoise(seed + 1, 32);
-  const vor = makeVoronoi(seed + 2, 7, 1);
-  const vor2 = makeVoronoi(seed + 3, 15, 1);
+  const vn = makeNoise(seed + 1, 16);
+  const vn2 = makeNoise(seed + 2, 32);
+  const w = makeNoise(seed + 3, 32);
+  const pores = makeNoise(seed + 4, 128);
   const em = m.emissive();
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       const i = y * S + x;
       const u = x / S, v = y / S;
-      const wx = (fbm(n, u * 16, v * 16, 3) - 0.5) * 0.5;
-      const [a1, a2] = vor(u * 7 + wx, v * 7 - wx);
-      const vein = smooth(0.05, 0.0, a2 - a1);
-      const [b1, b2] = vor2(u * 15 - wx, v * 15 + wx);
-      const capillary = smooth(0.035, 0.0, b2 - b1) * 0.6;
-      const wrinkle = ridged(w, u * 32, v * 32, 4);
+      // domain-warped ridges make meandering, branching vein lines
+      const wx = (fbm(n, u * 8, v * 8, 3) - 0.5) * 3, wy = (fbm(n, u * 8 + 5, v * 8 + 3, 3) - 0.5) * 3;
+      const r1 = 1 - Math.abs(fbm(vn, u * 8 + wx, v * 8 + wy, 4) * 2 - 1);
+      const r2 = 1 - Math.abs(fbm(vn2, u * 16 + wy, v * 16 + wx, 3) * 2 - 1);
+      const vein = smooth(0.9, 0.975, r1);
+      const capillary = smooth(0.93, 0.985, r2) * 0.6;
+      const wrinkle = ridged(w, u * 16 + wx * 0.3, v * 32, 3);
       const mott = fbm(n, u * 16 + 3, v * 16, 5);
-      m.h[i] = wrinkle * 0.35 + vein * 0.45 + capillary * 0.2 + mott * 0.2;
-      const base = 0.06 + mott * 0.06;
-      m.col[i * 3] = base * 1.35 + vein * 0.06;
-      m.col[i * 3 + 1] = base * 0.95;
-      m.col[i * 3 + 2] = base * 1.05;
-      m.rough[i] = 0.32 + wrinkle * 0.3 - vein * 0.15;
-      em[i] = vein * smooth(0.35, 0.65, fbm(n, u * 16 + 9, v * 16 + 4, 3)) + capillary * 0.25;
+      const pore = smooth(0.8, 0.9, pores(u * 128, v * 128));
+      m.h[i] = wrinkle * 0.25 + vein * 0.4 + capillary * 0.15 + mott * 0.25 - pore * 0.12;
+      const base = 0.09 + mott * 0.07;
+      const flush = smooth(0.45, 0.75, mott);
+      m.col[i * 3] = (base * (1.3 + flush * 0.4) + vein * 0.05) * (1 - pore * 0.3);
+      m.col[i * 3 + 1] = base * (0.95 - flush * 0.15) * (1 - pore * 0.3) * (1 - vein * 0.3);
+      m.col[i * 3 + 2] = base * 1.0 * (1 - pore * 0.3) * (1 - vein * 0.15);
+      m.rough[i] = 0.3 + wrinkle * 0.25 + pore * 0.2;
+      em[i] = vein * smooth(0.4, 0.7, fbm(n, u * 4 + 9, v * 4 + 4, 3)) + capillary * 0.2;
     }
   }
-  return finish(m, 6);
+  return finish(m, 5);
 }
 
 // Segmented chitin/carapace: glossy plates with raised lips. Tile = 0.6 m.

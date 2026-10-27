@@ -81,7 +81,7 @@ export class Post {
     this.weaponPass.clear = false;
     this.weaponPass.clearDepth = true;
     this.sanitize = new ShaderPass(SanitizeShader);
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.85, 0.55, 0.82);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.6, 0.5, 0.95);
     this.grade = new ShaderPass(GradeShader);
     this.output = new OutputPass();
     this.composer.addPass(this.mainPass);

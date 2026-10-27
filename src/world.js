@@ -297,7 +297,7 @@ export class World {
       this.scene.add(mesh);
       return mesh;
     };
-    ring(1.0, 0.03, WALL_RADIUS - 0.42, 1.4);
+    ring(1.2, 0.03, WALL_RADIUS - 0.04, 1.4);
   }
 
   _buildRoof() {

@@ -64,7 +64,10 @@ export class Input {
     try {
       const p = this.el.requestPointerLock({ unadjustedMovement: true });
       if (p && p.catch) p.catch(() => {
-        try { this.el.requestPointerLock(); } catch (e) { /* ignore */ }
+        try {
+          const q = this.el.requestPointerLock();
+          if (q && q.catch) q.catch(() => {});
+        } catch (e) { /* ignore */ }
       });
     } catch (e) {
       try { this.el.requestPointerLock(); } catch (e2) { /* ignore */ }

@@ -3,6 +3,8 @@
 import * as THREE from 'three';
 import { glowTexture } from './textures.js';
 import { rbox } from './shapes.js';
+import { materials as pbr } from './pbr.js';
+import { triplanar } from './triplanar.js';
 
 export const WEAPONS = [
   {
@@ -39,133 +41,225 @@ export const WEAPONS = [
 
 export const WEAPON_BY_ID = Object.fromEntries(WEAPONS.map((w) => [w.id, w]));
 
+// --- detailed procedural viewmodels ---------------------------------------------------------
 function mats(accent) {
+  const P = pbr();
+  const std = (color, roughness = 1, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
   return {
-    gun: new THREE.MeshStandardMaterial({ color: 0x5a616d, metalness: 0.45, roughness: 0.42 }),
-    dark: new THREE.MeshStandardMaterial({ color: 0x25282e, metalness: 0.2, roughness: 0.65 }),
-    trim: new THREE.MeshStandardMaterial({ color: 0x9a8268, metalness: 0.6, roughness: 0.35 }),
+    gun: triplanar(std(0xe8ecf0, 1, 1), P.gun, { space: 'object', scale: 5, normalScale: 0.8 }),
+    dark: triplanar(std(0x7a7e86, 1, 1), P.gun, { space: 'object', scale: 6, normalScale: 0.6 }),
+    poly: triplanar(std(0xb0b0b0), P.grip, { space: 'object', scale: 9, normalScale: 1.3 }),
+    trim: std(0x9a7a50, 0.35, 1),
+    hole: std(0x020202, 1, 0),
+    glass: new THREE.MeshStandardMaterial({ color: 0x0a1a24, roughness: 0.05, metalness: 0.2, transparent: true, opacity: 0.45 }),
+    shell: std(0x7a1410, 0.55, 0),
     glow: new THREE.MeshStandardMaterial({ color: 0x000000, emissive: accent, emissiveIntensity: 2.2 }),
-    sleeve: new THREE.MeshStandardMaterial({ color: 0x24272d, roughness: 0.95 }),
-    glove: new THREE.MeshStandardMaterial({ color: 0x1a1a1d, roughness: 0.7, metalness: 0.1 }),
+    sleeve: triplanar(std(0x6a6e78), P.cloth, { space: 'object', scale: 6, normalScale: 1.5 }),
+    glove: triplanar(std(0x5a5a5e), P.grip, { space: 'object', scale: 14, normalScale: 0.8 }),
   };
 }
 
-function box(w, h, d, mat, x, y, z, parent) {
-  const m = new THREE.Mesh(rbox(w, h, d, Math.min(w, h, d) * 0.35), mat);
+const geoCache = new Map();
+const memo = (k, f) => (geoCache.has(k) ? geoCache.get(k) : (geoCache.set(k, f()), geoCache.get(k)));
+// Rounded box; cylinder/torus helpers oriented along Z (the barrel axis).
+const RB = (w, h, d, r = null) => memo(`b${w},${h},${d},${r}`, () => rbox(w, h, d, r ?? Math.min(w, h, d) * 0.28));
+const CZ = (r, len, seg = 24, rTop = r) => memo(`z${r},${len},${seg},${rTop}`, () => new THREE.CylinderGeometry(rTop, r, len, seg).rotateX(Math.PI / 2));
+const RINGZ = (r, t, arc = Math.PI * 2) => memo(`r${r},${t},${arc}`, () => new THREE.TorusGeometry(r, t, 8, 32, arc));
+
+function part(parent, geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
+  const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
+  m.rotation.set(rx, ry, rz);
   parent.add(m);
   return m;
 }
 
-function cyl(r, len, mat, x, y, z, parent, seg = 12, rTop = r) {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, r, len, Math.max(24, seg)), mat);
-  m.rotation.x = Math.PI / 2;
-  m.position.set(x, y, z);
-  parent.add(m);
-  return m;
+// Picatinny rail: a base with evenly spaced cross slots.
+function rail(parent, M, x, y, z0, z1, w = 0.03) {
+  const len = Math.abs(z1 - z0);
+  part(parent, RB(w * 0.8, 0.008, len, 0.002), M.dark, x, y, (z0 + z1) / 2);
+  for (let z = Math.min(z0, z1) + 0.006; z < Math.max(z0, z1); z += 0.01) part(parent, RB(w, 0.006, 0.006, 0.0015), M.dark, x, y + 0.006, z);
+}
+
+function triggerGroup(parent, M, y, z) {
+  part(parent, RINGZ(0.025, 0.0045, Math.PI), M.dark, 0, y, z, 0, Math.PI / 2, Math.PI);
+  const t = part(parent, RB(0.006, 0.026, 0.008, 0.002), M.dark, 0, y + 0.004, z + 0.002);
+  t.rotation.x = 0.35;
 }
 
 function arm(M, parent, gripPos) {
-  // A gloved hand on the grip and a forearm running off-screen.
-  const hand = box(0.075, 0.09, 0.11, M.glove, gripPos.x, gripPos.y, gripPos.z, parent);
-  hand.rotation.x = 0.3;
-  const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.42, 4, 16), M.sleeve);
-  fore.position.set(gripPos.x + 0.06, gripPos.y - 0.14, gripPos.z + 0.25);
-  fore.rotation.set(1.15, 0, 0.35);
-  parent.add(fore);
+  const hand = part(parent, RB(0.075, 0.09, 0.11, 0.03), M.glove, gripPos.x, gripPos.y, gripPos.z, 0.3);
+  hand.scale.set(1, 1, 1);
+  for (let k = 0; k < 3; k++) part(parent, memo('finger', () => new THREE.CapsuleGeometry(0.011, 0.045, 4, 8)), M.glove, gripPos.x - 0.025 + k * 0.016, gripPos.y - 0.01 - k * 0.018, gripPos.z - 0.05, 0, 0, Math.PI / 2);
+  part(parent, memo('cuff', () => new THREE.CylinderGeometry(0.05, 0.05, 0.05, 16)), M.glove, gripPos.x + 0.035, gripPos.y - 0.09, gripPos.z + 0.13, 1.15, 0, 0.35);
+  part(parent, memo('fore', () => new THREE.CapsuleGeometry(0.052, 0.42, 4, 16)), M.sleeve, gripPos.x + 0.06, gripPos.y - 0.14, gripPos.z + 0.25, 1.15, 0, 0.35);
 }
 
 function buildModel(def) {
   const g = new THREE.Group();
   const M = mats(def.color);
   const muzzle = new THREE.Object3D();
-  let coils = [];
+  const coils = [];
   switch (def.id) {
     case 'pistol': {
-      box(0.06, 0.07, 0.28, M.gun, 0, 0.02, -0.08, g); // frame
-      const slide = box(0.065, 0.055, 0.3, M.trim, 0, 0.078, -0.09, g);
+      part(g, RB(0.056, 0.05, 0.24, 0.01), M.dark, 0, 0.012, -0.08);
+      for (let k = 0; k < 4; k++) part(g, RB(0.05, 0.007, 0.006, 0.002), M.dark, 0, -0.016, -0.15 - k * 0.014);
+      const slide = new THREE.Group();
       slide.name = 'slide';
-      box(0.067, 0.008, 0.22, M.glow, 0, 0.06, -0.09, g);
-      cyl(0.014, 0.05, M.gun, 0, 0.07, -0.26, g);
-      const grip = box(0.055, 0.15, 0.08, M.dark, 0, -0.07, 0.02, g);
-      grip.rotation.x = 0.28;
-      box(0.012, 0.02, 0.012, M.glow, 0, 0.115, 0.04, g); // rear sight dot
-      box(0.008, 0.02, 0.008, M.glow, 0, 0.115, -0.22, g); // front sight
+      slide.position.set(0, 0.072, -0.09);
+      g.add(slide);
+      part(slide, RB(0.064, 0.058, 0.3, 0.012), M.gun);
+      part(slide, RB(0.03, 0.004, 0.06, 0.0015), M.hole, 0, 0.029, -0.03);
+      for (let k = 0; k < 7; k++) part(slide, RB(0.0665, 0.042, 0.003, 0.001), M.dark, 0, -0.002, 0.085 + k * 0.008);
+      for (let k = 0; k < 5; k++) part(slide, RB(0.0665, 0.03, 0.003, 0.001), M.dark, 0, 0.004, -0.12 + k * 0.007);
+      part(slide, RB(0.006, 0.012, 0.012, 0.002), M.dark, 0, 0.034, -0.135);
+      part(slide, RB(0.05, 0.012, 0.012, 0.003), M.dark, 0, 0.034, 0.13);
+      part(slide, memo('dot', () => new THREE.SphereGeometry(0.0025, 8, 6)), M.glow, 0, 0.041, -0.135);
+      part(slide, memo('dot', () => new THREE.SphereGeometry(0.0025, 8, 6)), M.glow, -0.012, 0.041, 0.13);
+      part(slide, memo('dot', () => new THREE.SphereGeometry(0.0025, 8, 6)), M.glow, 0.012, 0.041, 0.13);
+      part(slide, RB(0.0655, 0.003, 0.14, 0.001), M.glow, 0, -0.018, -0.04);
+      part(g, CZ(0.011, 0.02), M.dark, 0, 0.075, -0.245);
+      part(g, CZ(0.0065, 0.022, 16), M.hole, 0, 0.075, -0.246);
+      triggerGroup(g, M, -0.022, -0.015);
+      part(g, RB(0.054, 0.14, 0.07, 0.016), M.poly, 0, -0.075, 0.035, 0.28);
+      part(g, RB(0.046, 0.13, 0.012, 0.004), M.dark, 0, -0.068, 0.072, 0.28);
+      part(g, RB(0.05, 0.012, 0.062, 0.004), M.dark, 0, -0.143, 0.057, 0.28);
+      part(g, RB(0.012, 0.022, 0.014, 0.003), M.dark, 0, 0.06, 0.072, -0.4);
+      part(g, memo('pin', () => new THREE.CylinderGeometry(0.004, 0.004, 0.06, 10).rotateZ(Math.PI / 2)), M.gun, 0, 0.0, -0.03);
+      part(g, memo('pin', () => new THREE.CylinderGeometry(0.004, 0.004, 0.06, 10).rotateZ(Math.PI / 2)), M.gun, 0, 0.012, 0.05);
       arm(M, g, new THREE.Vector3(0, -0.07, 0.03));
-      muzzle.position.set(0, 0.075, -0.3);
+      muzzle.position.set(0, 0.075, -0.26);
       break;
     }
     case 'shotgun': {
-      box(0.09, 0.11, 0.38, M.gun, 0, 0, -0.05, g); // receiver
-      cyl(0.026, 0.62, M.trim, 0, 0.03, -0.5, g); // barrel
-      cyl(0.022, 0.5, M.gun, 0, -0.03, -0.44, g); // mag tube
-      const pump = box(0.075, 0.07, 0.18, M.dark, 0, -0.03, -0.42, g);
+      part(g, RB(0.08, 0.1, 0.36, 0.014), M.gun, 0, 0, -0.04);
+      part(g, RB(0.004, 0.034, 0.08, 0.001), M.hole, 0.04, 0.016, -0.05);
+      part(g, CZ(0.022, 0.66), M.gun, 0, 0.03, -0.52);
+      part(g, CZ(0.025, 0.025), M.dark, 0, 0.03, -0.84);
+      part(g, CZ(0.016, 0.027, 16), M.hole, 0, 0.03, -0.842);
+      part(g, memo('bead', () => new THREE.SphereGeometry(0.005, 10, 8)), M.trim, 0, 0.056, -0.83);
+      part(g, RB(0.012, 0.006, 0.6, 0.002), M.dark, 0, 0.056, -0.52);
+      for (let k = 0; k < 12; k++) part(g, RB(0.006, 0.006, 0.006, 0.001), M.dark, 0, 0.05, -0.24 - k * 0.05);
+      part(g, CZ(0.019, 0.5), M.dark, 0, -0.025, -0.47);
+      part(g, CZ(0.022, 0.03), M.gun, 0, -0.025, -0.735);
+      part(g, RB(0.05, 0.07, 0.02, 0.005), M.dark, 0, 0.003, -0.7);
+      const pump = new THREE.Group();
       pump.name = 'pump';
-      box(0.07, 0.1, 0.25, M.dark, 0, -0.04, 0.24, g).rotation.x = -0.15; // stock
-      box(0.092, 0.012, 0.3, M.glow, 0, 0.035, -0.05, g);
-      box(0.012, 0.012, 0.012, M.glow, 0, 0.06, -0.8, g);
-      for (let i = 0; i < 3; i++) box(0.02, 0.02, 0.02, M.glow, 0.047, -0.005, 0.05 - i * 0.05, g);
-      arm(M, g, new THREE.Vector3(0, -0.08, 0.07));
-      muzzle.position.set(0, 0.03, -0.82);
+      pump.position.set(0, -0.025, -0.42);
+      g.add(pump);
+      part(pump, CZ(0.033, 0.18, 20), M.poly);
+      for (let k = 0; k < 8; k++) part(pump, RINGZ(0.0335, 0.0035), M.dark, 0, 0, -0.07 + k * 0.02);
+      triggerGroup(g, M, -0.06, 0.05);
+      part(g, RB(0.05, 0.11, 0.06, 0.015), M.poly, 0, -0.085, 0.1, 0.3);
+      part(g, RB(0.06, 0.09, 0.26, 0.02), M.poly, 0, -0.035, 0.25, -0.15);
+      part(g, RB(0.064, 0.105, 0.02, 0.006), M.dark, 0, -0.055, 0.375, -0.15);
+      part(g, RB(0.006, 0.05, 0.13, 0.002), M.dark, 0.043, 0.008, -0.04);
+      for (let k = 0; k < 4; k++) {
+        part(g, memo('shell', () => new THREE.CylinderGeometry(0.0095, 0.0095, 0.05, 16)), M.shell, 0.052, 0.012, -0.09 + k * 0.026);
+        part(g, memo('shellBase', () => new THREE.CylinderGeometry(0.01, 0.01, 0.014, 16)), M.trim, 0.052, -0.02, -0.09 + k * 0.026);
+      }
+      part(g, RB(0.082, 0.004, 0.22, 0.001), M.glow, 0, -0.035, -0.05);
+      arm(M, g, new THREE.Vector3(0, -0.085, 0.08));
+      muzzle.position.set(0, 0.03, -0.86);
       break;
     }
     case 'rifle': {
-      box(0.075, 0.1, 0.46, M.gun, 0, 0, -0.1, g);
-      box(0.06, 0.06, 0.3, M.dark, 0, -0.01, -0.45, g); // handguard
-      cyl(0.016, 0.22, M.trim, 0, 0.01, -0.68, g);
-      const mag = box(0.05, 0.16, 0.08, M.dark, 0, -0.12, -0.1, g);
-      mag.rotation.x = 0.2;
+      part(g, RB(0.058, 0.06, 0.22, 0.01), M.dark, 0, -0.015, -0.03);
+      part(g, RB(0.064, 0.05, 0.3, 0.01), M.gun, 0, 0.035, -0.06);
+      part(g, RB(0.004, 0.022, 0.06, 0.001), M.hole, 0.033, 0.03, -0.04);
+      rail(g, M, 0, 0.062, -0.2, 0.08);
+      part(g, RB(0.034, 0.02, 0.07, 0.005), M.dark, 0, 0.078, -0.06);
+      part(g, RB(0.006, 0.05, 0.05, 0.002), M.dark, -0.02, 0.105, -0.07);
+      part(g, RB(0.006, 0.05, 0.05, 0.002), M.dark, 0.02, 0.105, -0.07);
+      part(g, RB(0.046, 0.006, 0.05, 0.002), M.dark, 0, 0.13, -0.07);
+      part(g, RB(0.034, 0.036, 0.002, 0.0008), M.glass, 0, 0.11, -0.08);
+      part(g, memo('ret', () => new THREE.TorusGeometry(0.006, 0.0007, 6, 24)), M.glow, 0, 0.11, -0.081);
+      part(g, memo('dot', () => new THREE.SphereGeometry(0.0012, 8, 6)), M.glow, 0, 0.11, -0.081);
+      part(g, RB(0.03, 0.01, 0.03, 0.003), M.dark, 0, 0.058, 0.11);
+      part(g, RB(0.058, 0.058, 0.32, 0.012), M.gun, 0, 0.028, -0.37);
+      for (let k = 0; k < 6; k++) {
+        part(g, RB(0.0595, 0.012, 0.028, 0.004), M.hole, 0, 0.018, -0.26 - k * 0.042);
+      }
+      rail(g, M, 0, 0.06, -0.52, -0.22);
+      part(g, CZ(0.011, 0.2), M.dark, 0, 0.026, -0.62);
+      part(g, CZ(0.017, 0.065), M.dark, 0, 0.026, -0.74);
+      for (let k = 0; k < 3; k++) part(g, RB(0.036, 0.006, 0.008, 0.002), M.hole, 0, 0.026, -0.722 - k * 0.016);
+      const mag = new THREE.Group();
       mag.name = 'mag';
-      box(0.06, 0.09, 0.22, M.dark, 0, -0.02, 0.22, g); // stock
-      // holo sight
-      box(0.05, 0.012, 0.09, M.gun, 0, 0.06, -0.05, g);
-      const frame = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.005, 10, 40), M.gun);
-      frame.position.set(0, 0.095, -0.07);
-      g.add(frame);
-      box(0.006, 0.006, 0.002, M.glow, 0, 0.095, -0.07, g);
-      box(0.077, 0.01, 0.3, M.glow, 0, -0.035, -0.12, g);
+      mag.position.set(0, -0.12, -0.1);
+      mag.rotation.x = 0.2;
+      g.add(mag);
+      part(mag, RB(0.048, 0.17, 0.08, 0.008), M.dark);
+      for (let k = 0; k < 4; k++) part(mag, RB(0.05, 0.004, 0.06, 0.001), M.gun, 0, 0.06 - k * 0.04, 0);
+      part(mag, RB(0.052, 0.012, 0.084, 0.003), M.poly, 0, -0.088, 0);
+      triggerGroup(g, M, -0.055, 0.03);
+      part(g, RB(0.04, 0.11, 0.055, 0.012), M.poly, 0, -0.075, 0.08, 0.35);
+      part(g, CZ(0.016, 0.16), M.dark, 0, 0.012, 0.17);
+      part(g, RB(0.05, 0.085, 0.14, 0.015), M.poly, 0, -0.005, 0.27);
+      part(g, RB(0.05, 0.03, 0.08, 0.008), M.poly, 0, 0.045, 0.25);
+      part(g, RB(0.0595, 0.004, 0.2, 0.001), M.glow, 0, -0.002, -0.38);
       arm(M, g, new THREE.Vector3(0, -0.07, 0.05));
-      muzzle.position.set(0, 0.01, -0.8);
+      muzzle.position.set(0, 0.026, -0.78);
       break;
     }
     case 'rail': {
-      box(0.09, 0.12, 0.5, M.gun, 0, 0, -0.05, g);
-      box(0.05, 0.05, 0.75, M.trim, 0, 0.035, -0.55, g);
-      box(0.05, 0.03, 0.7, M.dark, 0, -0.035, -0.52, g);
+      part(g, RB(0.09, 0.12, 0.5, 0.018), M.gun, 0, 0, -0.05);
+      for (let k = 0; k < 10; k++) part(g, RB(0.07, 0.028, 0.005, 0.0015), M.dark, 0, 0.074, 0.02 + k * 0.016);
+      part(g, RB(0.05, 0.05, 0.78, 0.012), M.gun, 0, 0.035, -0.56);
+      part(g, RB(0.05, 0.03, 0.72, 0.008), M.dark, 0, -0.035, -0.53);
       for (let i = 0; i < 5; i++) {
-        const c = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.012, 12, 40), M.glow.clone());
-        c.position.set(0, 0.0, -0.32 - i * 0.11);
+        const c = new THREE.Mesh(memo('coil', () => new THREE.TorusGeometry(0.055, 0.012, 12, 40)), M.glow.clone());
+        c.position.set(0, 0.0, -0.36 - i * 0.1);
         g.add(c);
         coils.push(c);
+        part(g, RB(0.12, 0.012, 0.012, 0.003), M.dark, 0, 0, -0.36 - i * 0.1 - 0.035);
       }
-      box(0.07, 0.1, 0.26, M.dark, 0, -0.02, 0.28, g);
-      box(0.03, 0.04, 0.16, M.gun, 0, 0.09, -0.02, g); // scope
-      box(0.02, 0.02, 0.02, M.glow, 0, 0.09, -0.11, g);
-      arm(M, g, new THREE.Vector3(0, -0.08, 0.08));
-      muzzle.position.set(0, 0.0, -0.95);
+      part(g, CZ(0.026, 0.15, 20), M.glass, 0.062, -0.01, -0.06);
+      const cell = part(g, CZ(0.015, 0.13, 16), M.glow, 0.062, -0.01, -0.06);
+      cell.scale.set(1, 1, 1);
+      for (const z of [-0.14, 0.02]) part(g, CZ(0.03, 0.012, 20), M.dark, 0.062, -0.01, z);
+      const cable = new THREE.CatmullRomCurve3([new THREE.Vector3(0.062, -0.01, -0.14), new THREE.Vector3(0.07, -0.03, -0.24), new THREE.Vector3(0.04, -0.02, -0.34)]);
+      part(g, memo('cable', () => new THREE.TubeGeometry(cable, 16, 0.006, 8, false)), M.dark);
+      part(g, CZ(0.022, 0.18), M.gun, 0, 0.1, -0.02);
+      part(g, CZ(0.026, 0.02), M.dark, 0, 0.1, -0.11);
+      part(g, CZ(0.019, 0.004, 20), M.glass, 0, 0.1, -0.12);
+      for (const z of [-0.07, 0.03]) part(g, RB(0.02, 0.03, 0.02, 0.004), M.dark, 0, 0.075, z);
+      triggerGroup(g, M, -0.07, 0.05);
+      part(g, RB(0.045, 0.11, 0.06, 0.014), M.poly, 0, -0.1, 0.1, 0.3);
+      part(g, RB(0.07, 0.1, 0.26, 0.02), M.poly, 0, -0.02, 0.29);
+      arm(M, g, new THREE.Vector3(0, -0.085, 0.09));
+      muzzle.position.set(0, 0.0, -0.96);
       break;
     }
     case 'launcher': {
-      box(0.1, 0.12, 0.34, M.gun, 0, 0, 0.02, g);
-      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.18, 32), M.trim);
-      drum.rotation.x = Math.PI / 2;
-      drum.position.set(0, -0.01, -0.22);
+      part(g, RB(0.1, 0.12, 0.32, 0.018), M.gun, 0, 0, 0.02);
+      const drum = new THREE.Group();
       drum.name = 'drum';
+      drum.position.set(0, -0.01, -0.22);
       g.add(drum);
-      cyl(0.055, 0.36, M.gun, 0, 0.02, -0.48, g, 10);
-      cyl(0.062, 0.05, M.trim, 0, 0.02, -0.66, g, 10);
-      for (let i = 0; i < 3; i++) box(0.102, 0.006, 0.012, M.glow, 0, 0.062, -0.05 - i * 0.05, g);
-      box(0.07, 0.1, 0.2, M.dark, 0, -0.04, 0.25, g);
-      arm(M, g, new THREE.Vector3(0, -0.08, 0.06));
+      part(drum, CZ(0.1, 0.18, 36), M.dark);
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2;
+        part(drum, CZ(0.024, 0.182, 16), M.hole, Math.cos(a) * 0.058, Math.sin(a) * 0.058, 0);
+        part(drum, RB(0.012, 0.012, 0.16, 0.003), M.gun, Math.cos(a + 0.52) * 0.1, Math.sin(a + 0.52) * 0.1, 0, 0, 0, a);
+      }
+      part(g, CZ(0.05, 0.36, 28), M.gun, 0, 0.02, -0.48);
+      for (let k = 0; k < 6; k++) part(g, RINGZ(0.056, 0.007), M.dark, 0, 0.02, -0.34 - k * 0.05);
+      part(g, RB(0.07, 0.012, 0.3, 0.004), M.dark, 0, 0.082, -0.48);
+      part(g, CZ(0.062, 0.05, 28), M.trim, 0, 0.02, -0.66);
+      part(g, CZ(0.044, 0.052, 20), M.hole, 0, 0.02, -0.662);
+      for (let i = 0; i < 3; i++) part(g, RB(0.102, 0.004, 0.012, 0.001), M.glow, 0, 0.062, -0.05 - i * 0.05);
+      part(g, RB(0.035, 0.1, 0.04, 0.012), M.poly, 0, -0.1, -0.45, 0.15);
+      triggerGroup(g, M, -0.07, 0.07);
+      part(g, RB(0.05, 0.11, 0.06, 0.015), M.poly, 0, -0.1, 0.12, 0.3);
+      part(g, RB(0.07, 0.1, 0.2, 0.02), M.poly, 0, -0.04, 0.27);
+      arm(M, g, new THREE.Vector3(0, -0.085, 0.1));
       muzzle.position.set(0, 0.02, -0.7);
       break;
     }
   }
   g.add(muzzle);
   g.scale.setScalar(0.85);
-  g.traverse((o) => {
-    if (o.isMesh) o.castShadow = false;
-  });
   return { group: g, muzzle, coils };
 }
 
@@ -410,7 +504,7 @@ export class WeaponSystem {
       const mag = g.getObjectByName('mag');
       if (mag) mag.position.y = -0.12 - Math.max(0, Math.sin(p * Math.PI * 2)) * 0.12;
       const drum = g.getObjectByName('drum');
-      if (drum) drum.rotation.y += dt * 8;
+      if (drum) drum.rotation.z += dt * 8;
     }
     if (this.switchTime > 0) {
       const k = this.switchTime / 0.32;
