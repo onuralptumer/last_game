@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LAST LIGHT</title>
+    <meta name="description" content="LAST LIGHT — a dark arena FPS. Hold the Crucible. Keep the flame alive." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="canvas-holder"></div>
+
+      <!-- In-game HUD -->
+      <div id="hud" class="hidden">
+        <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b></b></div>
+        <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+        <div id="dmg-indicators"></div>
+        <div id="dmg-numbers"></div>
+        <div id="vignette-hurt"></div>
+
+        <div id="top-center">
+          <div id="wave-label">WAVE 1</div>
+          <div id="wave-sub">—</div>
+          <div id="boss-bar" class="hidden">
+            <div class="boss-name">THE WARDEN</div>
+            <div class="boss-track"><div class="boss-fill"></div><div class="boss-trail"></div></div>
+          </div>
+        </div>
+
+        <div id="top-right">
+          <div class="shards"><span class="gem">◆</span><span id="shards-val">0</span></div>
+          <div class="score" id="score-val">0</div>
+          <div id="combo" class="hidden"><span id="combo-val">x2</span><div class="combo-track"><div class="combo-fill"></div></div></div>
+        </div>
+
+        <div id="feed"></div>
+
+        <div id="bottom-left">
+          <div class="armor-row"><div class="bar armor"><div class="fill"></div></div><span id="armor-val">0</span></div>
+          <div class="hp-row">
+            <span class="hp-icon">✚</span><span id="hp-val">100</span>
+            <div class="bar hp"><div class="trail"></div><div class="fill"></div></div>
+          </div>
+          <div id="dash-pips"></div>
+        </div>
+
+        <div id="bottom-right">
+          <div id="weapon-name">VESPER</div>
+          <div id="ammo"><span id="ammo-mag">12</span><span class="sep">/</span><span id="ammo-res">∞</span></div>
+          <div id="reload-hint" class="hidden">RELOAD [R]</div>
+          <div id="weapon-slots"></div>
+        </div>
+
+        <div id="banner"><div class="b-title"></div><div class="b-sub"></div></div>
+        <div id="click-to-resume" class="hidden">CLICK TO RESUME</div>
+      </div>
+
+      <!-- Main menu -->
+      <div id="menu" class="screen">
+        <div class="menu-col">
+          <div class="title-wrap">
+            <div class="pre-title">THE CRUCIBLE AWAITS</div>
+            <h1 class="title">LAST&nbsp;LIGHT</h1>
+            <div class="tagline">The city is gone. One flame remains. Hold the Crucible until dawn — or until you fall.</div>
+          </div>
+          <nav class="menu-buttons">
+            <button data-action="start" class="primary">Begin the Vigil</button>
+            <button data-action="reliquary">Reliquary <span class="ember-count" id="menu-embers"></span></button>
+            <button data-action="manual">Field Manual</button>
+            <button data-action="settings">Settings</button>
+          </nav>
+          <div class="menu-footer" id="menu-stats"></div>
+        </div>
+      </div>
+
+      <!-- Reliquary: meta progression -->
+      <div id="reliquary" class="screen hidden panel-screen">
+        <div class="panel wide">
+          <header>
+            <h2>Reliquary</h2>
+            <div class="sub">Embers carried back from the dark. Spend them to strengthen every vigil to come.</div>
+            <div class="balance"><span class="ember">✦</span><span id="rel-embers">0</span> embers</div>
+          </header>
+          <div id="perk-grid"></div>
+          <footer><button data-action="back">Back</button></footer>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div id="settings" class="screen hidden panel-screen">
+        <div class="panel">
+          <header><h2>Settings</h2></header>
+          <div class="settings-grid">
+            <label>Mouse sensitivity <input type="range" id="set-sens" min="0.2" max="3" step="0.05" /><output></output></label>
+            <label>Field of view <input type="range" id="set-fov" min="65" max="110" step="1" /><output></output></label>
+            <label>Effects volume <input type="range" id="set-sfx" min="0" max="1" step="0.05" /><output></output></label>
+            <label>Music volume <input type="range" id="set-music" min="0" max="1" step="0.05" /><output></output></label>
+            <label>Screen shake <input type="range" id="set-shake" min="0" max="1.5" step="0.05" /><output></output></label>
+            <label>Invert Y <input type="checkbox" id="set-invert" /></label>
+            <label>Graphics quality
+              <select id="set-quality">
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+          </div>
+          <footer><button data-action="back">Back</button></footer>
+        </div>
+      </div>
+
+      <!-- Field manual -->
+      <div id="manual" class="screen hidden panel-screen">
+        <div class="panel wide">
+          <header><h2>Field Manual</h2></header>
+          <div class="manual-cols">
+            <div>
+              <h3>Controls</h3>
+              <table class="keys">
+                <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Move</td></tr>
+                <tr><td><kbd>Mouse</kbd></td><td>Aim</td></tr>
+                <tr><td><kbd>LMB</kbd></td><td>Fire</td></tr>
+                <tr><td><kbd>Space</kbd></td><td>Jump</td></tr>
+                <tr><td><kbd>Shift</kbd></td><td>Dash (brief invulnerability)</td></tr>
+                <tr><td><kbd>R</kbd></td><td>Reload</td></tr>
+                <tr><td><kbd>1</kbd>–<kbd>5</kbd> / <kbd>Wheel</kbd></td><td>Switch weapon</td></tr>
+                <tr><td><kbd>Q</kbd></td><td>Last weapon</td></tr>
+                <tr><td><kbd>F</kbd></td><td>Flashlight</td></tr>
+                <tr><td><kbd>Esc</kbd></td><td>Pause</td></tr>
+              </table>
+              <h3>The Vigil</h3>
+              <p>Survive endless waves pouring from the six blood-gates. Between waves, choose one of three <em>boons</em> and spend <span class="gem">◆</span> shards in the Armory. Every fifth wave, the <em>Warden</em> descends.</p>
+              <p>When you fall, your progress becomes <span class="ember">✦</span> embers — spend them in the Reliquary for permanent power.</p>
+            </div>
+            <div>
+              <h3>Bestiary</h3>
+              <ul class="bestiary">
+                <li><b style="color:#ff4a2a">Husk</b> — Shambling hunter. Strikes at close range. Aim for the head.</li>
+                <li><b style="color:#ff40e0">Stalker</b> — Fast and erratic. Shrieks before it pounces — sidestep or dash.</li>
+                <li><b style="color:#b080ff">Wisp</b> — Hovering caster. Charges violet orbs. Its core is a weak point.</li>
+                <li><b style="color:#ff8a2a">Brute</b> — Armoured colossus. Jump over its ground slam. Hurls boulders at range.</li>
+                <li><b style="color:#ff3030">The Warden</b> — Keeper of the gates. Jump its shockwaves, strike the eye.</li>
+              </ul>
+              <h3>Tips</h3>
+              <ul class="tips">
+                <li>Critical hits on weak points deal double damage or more.</li>
+                <li>The Cinder's blast can launch you — rocket-jump onto the platforms.</li>
+                <li>Kill quickly to build a combo multiplier for score.</li>
+              </ul>
+            </div>
+          </div>
+          <footer><button data-action="back">Back</button></footer>
+        </div>
+      </div>
+
+      <!-- Pause -->
+      <div id="pause" class="screen hidden panel-screen">
+        <div class="panel narrow">
+          <header><h2>Paused</h2><div class="sub" id="pause-sub"></div></header>
+          <nav class="menu-buttons">
+            <button data-action="resume" class="primary">Resume</button>
+            <button data-action="settings">Settings</button>
+            <button data-action="manual">Field Manual</button>
+            <button data-action="abandon" class="danger">Abandon Vigil</button>
+          </nav>
+        </div>
+      </div>
+
+      <!-- Intermission between waves -->
+      <div id="intermission" class="screen hidden panel-screen">
+        <div class="inter-wrap">
+          <header class="inter-head">
+            <div class="pre-title" id="inter-pre">WAVE 1 SURVIVED</div>
+            <h2 id="inter-title">Choose a Boon</h2>
+            <div class="inter-stats" id="inter-stats"></div>
+          </header>
+          <div class="inter-body">
+            <section class="cards-section">
+              <div id="cards"></div>
+              <div class="cards-actions"><button id="reroll-btn" data-action="reroll">Reroll</button></div>
+            </section>
+            <section class="armory">
+              <div class="armory-head"><h3>Armory</h3><div class="shards"><span class="gem">◆</span><span id="armory-shards">0</span></div></div>
+              <div id="armory-list"></div>
+            </section>
+          </div>
+          <footer class="inter-foot">
+            <div class="vitals" id="inter-vitals"></div>
+            <button data-action="next-wave" class="primary" id="next-wave-btn" disabled>Choose a boon</button>
+          </footer>
+        </div>
+      </div>
+
+      <!-- Death -->
+      <div id="death" class="screen hidden panel-screen">
+        <div class="panel">
+          <header>
+            <div class="pre-title">YOUR VIGIL HAS ENDED</div>
+            <h2 class="death-title">The Light Fades</h2>
+          </header>
+          <div id="death-stats"></div>
+          <div id="death-embers"></div>
+          <nav class="menu-buttons row">
+            <button data-action="start" class="primary">Rise Again</button>
+            <button data-action="reliquary">Reliquary</button>
+            <button data-action="menu">Main Menu</button>
+          </nav>
+        </div>
+      </div>
+
+      <div id="loading">
+        <div class="load-title">LAST LIGHT</div>
+        <div class="load-sub" id="load-sub">Kindling the flame…</div>
+      </div>
+      <div id="fade"></div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
