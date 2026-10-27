@@ -2,8 +2,10 @@
 
 import * as THREE from 'three';
 import { boxCollider, cylCollider, WALL_RADIUS } from './physics.js';
-import { floorTextures, wallTextures, runeTexture, crateTexture } from './textures.js';
-import { rbox, taper, merged, pebble } from './shapes.js';
+import { puddleMap, runeTexture } from './textures.js';
+import { materials as pbr } from './pbr.js';
+import { triplanar } from './triplanar.js';
+import { rbox, taper, merged, pebble, flutedShaft, lathe, iBeam, jerseyBarrier, sandbag, oilDrum } from './shapes.js';
 
 const MOON_DIR = new THREE.Vector3(-0.35, 0.62, -0.7).normalize();
 
@@ -63,31 +65,62 @@ export class World {
     this._buildLamps();
     this._buildBanners();
     this._buildRubble();
+    this._buildWallDetail();
+    this._buildFloorDetail();
+    this._flushBatches();
     this._buildRain();
     this._buildDust();
+  }
+
+  // --- static detail batching: many small parts merged into one mesh per material ----------
+  _batch(mat, geo, x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, sz = sx, cast = true) {
+    if (!this.batches) this.batches = new Map();
+    const key = mat.uuid + (cast ? 'c' : 'n');
+    if (!this.batches.has(key)) this.batches.set(key, { mat, cast, parts: [] });
+    const m = new THREE.Matrix4().compose(
+      new THREE.Vector3(x, y, z),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz, 'YXZ')),
+      new THREE.Vector3(sx, sy, sz)
+    );
+    this.batches.get(key).parts.push({ geo, matrix: m });
+    return m;
+  }
+
+  // Adds parts in a local frame (origin + yaw) — handy for objects placed around the ring.
+  _batchLocal(mat, geo, frame, lx, ly, lz, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, sz = sx, cast = true) {
+    const c = Math.cos(frame.yaw), s = Math.sin(frame.yaw);
+    const x = frame.x + lx * c + lz * s, z = frame.z - lx * s + lz * c;
+    return this._batch(mat, geo, x, frame.y + ly, z, rx, ry + frame.yaw, rz, sx, sy, sz, cast);
+  }
+
+  _flushBatches() {
+    for (const { mat, cast, parts } of this.batches.values()) {
+      const mesh = new THREE.Mesh(merged(parts), mat);
+      mesh.castShadow = cast;
+      mesh.receiveShadow = true;
+      this.scene.add(mesh);
+    }
+    this.batches.clear();
   }
 
   // --- materials -------------------------------------------------------------------
   _materials() {
     if (this.mats) return this.mats;
-    const wall = wallTextures();
-    const concrete = new THREE.MeshStandardMaterial({
-      map: wall.map,
-      bumpMap: wall.bump,
-      bumpScale: 2.2,
-      color: 0x9aa0ad,
-      roughness: 0.9,
-      metalness: 0.0,
-    });
-    const darkStone = concrete.clone();
-    darkStone.color = new THREE.Color(0x6a6f7a);
-    const metal = new THREE.MeshStandardMaterial({ color: 0x23262d, roughness: 0.42, metalness: 0.85 });
-    const rust = new THREE.MeshStandardMaterial({ color: 0x3a2a22, roughness: 0.7, metalness: 0.5 });
-    const crate = new THREE.MeshStandardMaterial({ map: crateTexture(), roughness: 0.65, metalness: 0.45, color: 0xaaaaaa });
+    const P = pbr();
+    const std = (color, roughness = 1, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
+    // Ashlar masonry for the architecture (4 m tile), darker variant for trims and arches.
+    const concrete = triplanar(std(0xffffff), P.ashlar, { scale: 0.16, normalScale: 1.2, grime: true });
+    const darkStone = triplanar(std(0xd6d0c6), P.ashlar, { scale: 0.22, normalScale: 1.2, grime: true });
+    // Board-formed cast concrete for barriers, stairs and slabs (3 m tile).
+    const cast = triplanar(std(0xf0f0ea), P.concrete, { scale: 0.33, normalScale: 1.0, grime: true });
+    const metal = triplanar(std(0xffffff, 1, 1), P.metal, { scale: 0.5, normalScale: 1.0 });
+    const rust = triplanar(std(0xffffff, 1, 1), P.rustRed, { scale: 0.6, normalScale: 1.0 });
+    const crate = triplanar(std(0xc8d8b0, 1, 1), P.metal, { scale: 0.7, normalScale: 1.2 });
+    const plate = triplanar(std(0xffffff, 1, 1), P.plate, { scale: 0.85, normalScale: 1.0 });
     const redGlow = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xff2414, emissiveIntensity: 4 });
     const amberGlow = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xff8a2a, emissiveIntensity: 5 });
     const cyanGlow = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0x4fe0ff, emissiveIntensity: 4 });
-    this.mats = { concrete, darkStone, metal, rust, crate, redGlow, amberGlow, cyanGlow };
+    this.mats = { concrete, darkStone, cast, metal, rust, crate, plate, redGlow, amberGlow, cyanGlow };
     return this.mats;
   }
 
@@ -127,7 +160,7 @@ export class World {
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.envMap = pmrem.fromScene(envScene, 0.03).texture;
     this.scene.environment = this.envMap;
-    this.scene.environmentIntensity = 0.55;
+    this.scene.environmentIntensity = 0.8;
     pmrem.dispose();
   }
 
@@ -171,10 +204,10 @@ export class World {
 
   _buildLights() {
     const scene = this.scene;
-    this.hemi = new THREE.HemisphereLight(0x2a3a5c, 0x0b0907, 0.55);
+    this.hemi = new THREE.HemisphereLight(0x3a4c70, 0x16110c, 0.9);
     scene.add(this.hemi);
 
-    const moon = (this.moon = new THREE.DirectionalLight(0x9db2e6, 0.85));
+    const moon = (this.moon = new THREE.DirectionalLight(0x9db2e6, 1.5));
     moon.position.copy(MOON_DIR).multiplyScalar(60);
     moon.target.position.set(0, 0, 0);
     moon.castShadow = this.quality !== 'low';
@@ -185,21 +218,24 @@ export class World {
     moon.shadow.bias = -0.0004;
     moon.shadow.normalBias = 0.04;
     scene.add(moon, moon.target);
-    this.moonBase = 0.85;
+    this.moonBase = 1.5;
   }
 
   _buildFloor() {
-    const t = floorTextures();
-    t.map.repeat.set(9.5, 9.5);
-    t.bump.repeat.set(9.5, 9.5);
+    // Flagstones (8.2 m tile) with a non-tiling puddle roughness map across the arena.
+    const flag = pbr().flag;
+    const map = flag.albedo.clone();
+    const normalMap = flag.normal.clone();
+    map.repeat.set(9.5, 9.5);
+    normalMap.repeat.set(9.5, 9.5);
     const mat = new THREE.MeshStandardMaterial({
-      map: t.map,
-      bumpMap: t.bump,
-      bumpScale: 0.7,
-      roughnessMap: t.rough,
+      map,
+      normalMap,
+      normalScale: new THREE.Vector2(1.3, 1.3),
+      roughnessMap: puddleMap(),
       roughness: 1,
       metalness: 0.05,
-      color: 0xb8bcc6,
+      color: 0xd8d8d8,
       envMapIntensity: 1.6,
     });
     const floor = new THREE.Mesh(new THREE.CircleGeometry(39, 96), mat);
@@ -214,13 +250,7 @@ export class World {
     const segs = 64;
     const R = WALL_RADIUS + 0.75;
     const w = ((Math.PI * 2 * R) / segs) * 1.04;
-    const wallMat = concrete.clone();
-    wallMat.map = concrete.map.clone();
-    wallMat.map.repeat.set(1, 2.5);
-    wallMat.map.needsUpdate = true;
-    wallMat.bumpMap = concrete.bumpMap.clone();
-    wallMat.bumpMap.repeat.set(1, 2.5);
-    wallMat.bumpMap.needsUpdate = true;
+    const wallMat = concrete;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
     const blocks = [];
     for (let i = 0; i < segs; i++) {
@@ -267,8 +297,7 @@ export class World {
       this.scene.add(mesh);
       return mesh;
     };
-    ring(2.6, 0.06, WALL_RADIUS - 0.05, 5);
-    ring(0.35, 0.04, WALL_RADIUS - 0.05, 2.5);
+    ring(1.0, 0.03, WALL_RADIUS - 0.42, 1.4);
   }
 
   _buildRoof() {
@@ -372,59 +401,111 @@ export class World {
   }
 
   _buildPillars() {
-    const { concrete, darkStone } = this._materials();
-    const geo = new THREE.CylinderGeometry(1.1, 1.25, 17, 32);
-    const base = rbox(3, 1.2, 3, 0.4);
-    const capital = rbox(2.8, 0.9, 2.8, 0.35);
+    const { concrete, darkStone, cast, metal } = this._materials();
+    const baseProfile = lathe([[0, 0], [1.62, 0], [1.62, 0.1], [1.55, 0.14], [1.55, 0.22], [1.6, 0.3], [1.58, 0.42], [1.45, 0.5], [1.38, 0.52],
+      [1.34, 0.6], [1.4, 0.68], [1.38, 0.76], [1.3, 0.8], [1.27, 0.86], [0, 0.86]], 64);
+    const capProfile = lathe([[0, 0], [1.16, 0], [1.2, 0.05], [1.18, 0.12], [1.22, 0.18], [1.45, 0.42], [1.6, 0.55], [1.62, 0.62], [0, 0.62]], 64);
+    const plinth = rbox(3.2, 0.7, 3.2, 0.12);
+    const abacus = rbox(3.3, 0.38, 3.3, 0.1);
+    const band = new THREE.TorusGeometry(1.2, 0.035, 8, 64);
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
       const x = Math.cos(a) * 21, z = Math.sin(a) * 21;
       const broken = i === 3 || i === 6;
-      const h = broken ? 6.5 + i * 0.3 : 17;
-      const p = this._mesh(broken ? new THREE.CylinderGeometry(1.0, 1.25, h, 32) : geo, concrete, x, h / 2, z);
-      p.rotation.y = a;
-      const b = this._mesh(base, darkStone, x, 0.6, z);
-      b.rotation.y = a;
+      const shaftH = broken ? 5 + i * 0.3 : 14.6;
+      this._batch(darkStone, plinth, x, 0.35, z, 0, a);
+      this._batch(darkStone, baseProfile, x, 0.7, z, 0, a);
+      const shaft = flutedShaft(1.22, broken ? 1.12 : 1.02, shaftH, { flutes: 20, depth: 0.045, jagged: broken ? 1.2 : 0, seed: i });
+      this._batch(cast, shaft, x, 1.56 + shaftH / 2, z, 0, a);
+      // drum joints: thin recessed bands where the stone drums meet
+      for (let y = 3.2; y < 1.56 + shaftH - 0.6; y += 2.4) {
+        const t = (y - 1.56) / shaftH;
+        const r = 1.22 + (1.0 - 1.22) * t;
+        this._batch(darkStone, band, x, y, z, Math.PI / 2, 0, 0, r / 1.2, r / 1.2, 1);
+      }
       if (!broken) {
-        const c = this._mesh(capital, darkStone, x, 16.6, z);
-        c.rotation.y = a;
+        this._batch(darkStone, capProfile, x, 1.56 + shaftH, z, 0, a);
+        this._batch(darkStone, abacus, x, 1.56 + shaftH + 0.8, z, 0, a);
+        // iron tie-band
+        this._batch(metal, new THREE.TorusGeometry(1.13, 0.06, 8, 48), x, 11, z, Math.PI / 2);
       } else {
-        // fallen chunk next to the broken pillar
-        const chunk = this._mesh(new THREE.CylinderGeometry(1.05, 1.1, 3.4, 32), concrete, x + Math.cos(a + 1.4) * 2.6, 1.05, z + Math.sin(a + 1.4) * 2.6);
-        chunk.rotation.set(Math.PI / 2, 0, a + 0.4);
-        // The chunk lies on its side; cover its whole length with three cylinders.
+        // fallen drums of the broken column, plus loose fragments
+        const fx = x + Math.cos(a + 1.4) * 2.6, fz = z + Math.sin(a + 1.4) * 2.6;
+        const drum = flutedShaft(1.08, 1.05, 3.4, { flutes: 20, depth: 0.045, jagged: 0.5, seed: i + 4 });
+        this._batch(cast, drum, fx, 1.05, fz, 0, a + 0.4, Math.PI / 2);
         const ax = -Math.sin(a + 0.4), az = Math.cos(a + 0.4);
         for (const off of [-1.15, 0, 1.15]) {
-          this.colliders.push(cylCollider(chunk.position.x + ax * off, chunk.position.z + az * off, 1.1, 0, 2.15));
+          this.colliders.push(cylCollider(fx + ax * off, fz + az * off, 1.1, 0, 2.15));
+        }
+        for (let k = 0; k < 7; k++) {
+          const ang = a + k * 0.9, rr = 1.8 + (k % 3) * 0.5;
+          this._batch(concrete, pebble(0.25 + (k % 3) * 0.12, k + i), x + Math.cos(ang) * rr, 0.12, z + Math.sin(ang) * rr, k, k * 2, 0);
         }
       }
-      this.colliders.push(cylCollider(x, z, 1.5, 0, h));
+      this.colliders.push(cylCollider(x, z, 1.5, 0, 1.56 + shaftH));
     }
   }
 
   _buildCover() {
-    const { darkStone, metal, crate, amberGlow } = this._materials();
-    // Low barricades on the cardinal axes.
-    const addWall = (cx, cz, alongZ) => {
-      const w = alongZ ? 1 : 6, d = alongZ ? 6 : 1, h = 1.4;
-      this._mesh(rbox(w, h, d, 0.3), darkStone, cx, h / 2, cz);
-      const trim = this._mesh(rbox(w - 0.1, 0.14, d - 0.1, 0.06), metal, cx, h + 0.02, cz);
-      trim.castShadow = false;
-      const glow = new THREE.Mesh(rbox(alongZ ? 1.02 : 5.2, 0.05, alongZ ? 5.2 : 1.02, 0.024), amberGlow);
-      glow.position.set(cx, 0.9, cz);
-      this.scene.add(glow);
-      this.colliders.push(boxCollider(cx - w / 2, 0, cz - d / 2, cx + w / 2, h + 0.12, cz + d / 2));
+    const { cast, metal, rust, crate, amberGlow } = this._materials();
+    const canvas = triplanar(new THREE.MeshStandardMaterial({ color: 0x8a7a5c, roughness: 1 }), pbr().cloth, { scale: 1.6, normalScale: 1.5 });
+    const jersey = jerseyBarrier(1.95);
+    const bags = [sandbag(1), sandbag(2), sandbag(3)];
+    // Barricades on the cardinal axes: three jersey barriers topped with sandbags.
+    const addBarricade = (cx, cz, alongZ) => {
+      const w = alongZ ? 1 : 6, d = alongZ ? 6 : 1;
+      const yaw = alongZ ? Math.PI / 2 : 0;
+      const f = { x: cx, y: 0, z: cz, yaw };
+      for (let k = -1; k <= 1; k++) {
+        this._batchLocal(cast, jersey, f, k * 2.0, 0, 0, 0, (k * 0.03), 0);
+        // lifting loops
+        this._batchLocal(metal, new THREE.TorusGeometry(0.06, 0.012, 6, 12), f, k * 2.0 + 0.6, 0.84, 0);
+        this._batchLocal(metal, new THREE.TorusGeometry(0.06, 0.012, 6, 12), f, k * 2.0 - 0.6, 0.84, 0);
+      }
+      // two staggered courses of sandbags on top
+      for (let row = 0; row < 2; row++) {
+        const n = row === 0 ? 9 : 8;
+        for (let j = 0; j < n; j++) {
+          const lx = -2.65 + j * 0.64 + row * 0.32 + Math.sin(j * 3.1 + cx) * 0.04;
+          this._batchLocal(canvas, bags[(j + row) % 3], f, lx, 0.92 + row * 0.18, Math.sin(j * 1.7 + cz) * 0.03, 0, Math.sin(j * 2.3) * 0.12, Math.sin(j * 5.1) * 0.05);
+        }
+      }
+      // a small warning lamp on one end
+      this._batchLocal(metal, rbox(0.14, 0.16, 0.14, 0.03), f, 2.7, 0.9, 0);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.055, 16, 10), amberGlow);
+      const c = Math.cos(yaw), s = Math.sin(yaw);
+      lamp.position.set(cx + 2.7 * c, 1.02, cz - 2.7 * s);
+      this.scene.add(lamp);
+      this.colliders.push(boxCollider(cx - w / 2, 0, cz - d / 2, cx + w / 2, 1.4, cz + d / 2));
     };
-    addWall(12, 0, true);
-    addWall(-12, 0, true);
-    addWall(0, 12, false);
-    addWall(0, -12, false);
+    addBarricade(12, 0, true);
+    addBarricade(-12, 0, true);
+    addBarricade(0, 12, false);
+    addBarricade(0, -12, false);
 
-    const crateGeo = rbox(1.6, 1.6, 1.6, 0.14);
+    // Industrial crates: panelled steel boxes with edge frames and corner castings.
+    const body = rbox(1.5, 1.5, 1.5, 0.04);
+    const railH = rbox(1.62, 0.09, 0.09, 0.02);
+    const corner = rbox(0.16, 0.16, 0.16, 0.03);
+    const rib = rbox(0.06, 1.42, 0.05, 0.015);
     const addCrate = (x, z, y = 0, rot = 0) => {
-      const c = this._mesh(crateGeo, crate, x, y + 0.8, z);
-      c.rotation.y = rot;
-      // Collider is the axis-aligned footprint (crates are rotated little).
+      const f = { x, y, z, yaw: rot };
+      this._batchLocal(crate, body, f, 0, 0.8, 0);
+      for (const sy of [0.06, 1.54]) {
+        for (const [lx, lz, ry] of [[0, 0.77, 0], [0, -0.77, 0], [0.77, 0, Math.PI / 2], [-0.77, 0, Math.PI / 2]]) {
+          this._batchLocal(metal, railH, f, lx, sy, lz, 0, ry, 0);
+        }
+      }
+      for (const lx of [-0.77, 0.77]) for (const lz of [-0.77, 0.77]) {
+        this._batchLocal(metal, rbox(0.09, 1.5, 0.09, 0.02), f, lx, 0.8, lz);
+        this._batchLocal(metal, corner, f, lx, 0.1, lz);
+        this._batchLocal(metal, corner, f, lx, 1.5, lz);
+      }
+      // corrugation ribs on two faces
+      for (let k = -2; k <= 2; k++) {
+        this._batchLocal(metal, rib, f, k * 0.25, 0.8, 0.765);
+        this._batchLocal(metal, rib, f, k * 0.25, 0.8, -0.765);
+      }
       this.colliders.push(boxCollider(x - 0.85, y, z - 0.85, x + 0.85, y + 1.6, z + 0.85));
     };
     addCrate(-13, 26, 0, 0.1);
@@ -437,23 +518,65 @@ export class World {
     addCrate(4, 30, 0, 0.3);
     addCrate(-30, -4, 0, 0.12);
     addCrate(-29.6, -2.3, 0, -0.1);
+
+    // Rusted oil drums, one knocked over.
+    const drum = oilDrum();
+    const drums = [[28.2, -8.9], [28.6, -8.2], [-25.4, 12.7], [6.0, 30.4], [-31.2, -5.6], [14.4, -25.6]];
+    drums.forEach(([x, z], i) => {
+      if (i === 2) {
+        this._batch(rust, drum, x, 0.29, z, 0, 0.6, Math.PI / 2, 1, 1, 1);
+        this.colliders.push(cylCollider(x, z, 0.5, 0, 0.6));
+      } else {
+        this._batch(i % 2 ? rust : metal, drum, x, 0, z, 0, i);
+        this.colliders.push(cylCollider(x, z, 0.32, 0, 0.88));
+      }
+    });
   }
 
   _buildPlatforms() {
-    const { concrete, darkStone, metal, amberGlow } = this._materials();
+    const { cast, darkStone, metal, plate, amberGlow } = this._materials();
+    const post = iBeam(0.22, 0.16, 3.0);
+    const beam = iBeam(0.28, 0.16, 8.0);
+    const railPost = new THREE.CylinderGeometry(0.035, 0.035, 1.05, 12);
+    const rail = new THREE.CylinderGeometry(0.03, 0.03, 8.0, 12);
+    const toe = rbox(8.0, 0.12, 0.02, 0.008);
     const build = (cx, cz, dir) => {
       const s = 8, h = 3;
-      this._mesh(rbox(s, h, s, 0.45), concrete, cx, h / 2, cz);
-      const top = this._mesh(rbox(s + 0.3, 0.2, s + 0.3, 0.09), metal, cx, h + 0.1, cz);
-      top.castShadow = false;
+      // Cast-concrete core inset under a steel frame and tread-plate deck.
+      this._batch(cast, rbox(s - 0.6, h - 0.25, s - 0.6, 0.2), cx, (h - 0.25) / 2, cz);
+      this._batch(plate, rbox(s + 0.1, 0.08, s + 0.1, 0.03), cx, h + 0.16, cz);
+      for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        this._batch(metal, post, cx + ox * 3.88, h / 2, cz + oz * 3.88);
+        this._batch(metal, rbox(0.36, 0.06, 0.36, 0.015), cx + ox * 3.88, 0.03, cz + oz * 3.88);
+      }
+      for (const o of [-1, 1]) {
+        this._batch(metal, beam, cx, h - 0.02, cz + o * 3.94, Math.PI / 2, Math.PI / 2, 0);
+        this._batch(metal, beam, cx + o * 3.94, h - 0.02, cz, Math.PI / 2, 0, 0);
+        // cross bracing
+        this._batch(metal, new THREE.CylinderGeometry(0.03, 0.03, 4.6, 8), cx + o * 3.98, h / 2, cz, 0.62 * o, 0, 0);
+      }
+      // Guard rails on the three sides away from the stairs.
+      const sides = [[0, 1], [0, -1], [dir, 0]];
+      for (const [sx, sz] of sides) {
+        const along = sx === 0; // rail runs along X
+        const ex = cx + sx * 3.95, ez = cz + sz * 3.95;
+        for (let k = -4; k <= 4; k += 2) {
+          const px = along ? cx + k * 0.97 : ex, pz = along ? ez : cz + k * 0.97;
+          this._batch(metal, railPost, px, h + 0.72, pz);
+        }
+        for (const ry of [h + 1.22, h + 0.72]) {
+          this._batch(metal, rail, ex, ry, ez, along ? 0 : Math.PI / 2, 0, along ? Math.PI / 2 : 0);
+        }
+        this._batch(metal, toe, ex, h + 0.26, ez, 0, along ? 0 : Math.PI / 2, 0);
+      }
       this.colliders.push(boxCollider(cx - s / 2, 0, cz - s / 2, cx + s / 2, h + 0.2, cz + s / 2));
       // corner beacons
       for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-        const b = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.26, 4, 12), amberGlow);
-        b.position.set(cx + ox * (s / 2 - 0.2), h + 0.45, cz + oz * (s / 2 - 0.2));
+        const b = new THREE.Mesh(new THREE.SphereGeometry(0.07, 16, 10), amberGlow);
+        b.position.set(cx + ox * 3.88, h + 0.3, cz + oz * 3.88);
         this.scene.add(b);
       }
-      // Stairs descending toward the arena centre along X.
+      // Stairs: cast steps with steel nosing, descending toward the centre along X.
       const edge = cx - dir * (s / 2);
       const steps = 5, rise = 0.5, run = 0.85;
       for (let k = 1; k <= steps; k++) {
@@ -462,8 +585,9 @@ export class World {
         const x1 = dir > 0 ? edge : edge + len;
         const y = k * rise + 0.2;
         const zc = cz - dir * 1.2;
-        const st = this._mesh(rbox(x1 - x0, y, 4, 0.12), darkStone, (x0 + x1) / 2, y / 2, zc);
-        st.castShadow = k === 1;
+        this._batch(darkStone, rbox(x1 - x0, y, 4, 0.06), (x0 + x1) / 2, y / 2, zc, 0, 0, 0, 1, 1, 1, k === 1);
+        const noseX = dir > 0 ? x0 : x1;
+        this._batch(metal, rbox(0.08, 0.05, 3.9, 0.015), noseX + dir * 0.04, y + 0.02, zc);
         this.colliders.push(boxCollider(x0, 0, zc - 2, x1, y, zc + 2));
       }
       this.pickupSpots.push(new THREE.Vector3(cx, h + 0.2, cz));
@@ -473,7 +597,7 @@ export class World {
   }
 
   _buildGates() {
-    const { darkStone, metal } = this._materials();
+    const { cast: darkStone, metal } = this._materials();
     const portalMat = new THREE.ShaderMaterial({
       uniforms: { uTime: { value: 0 }, uPulse: { value: 0 } },
       vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
@@ -506,26 +630,38 @@ export class World {
       group.position.copy(base);
       group.lookAt(0, 0, 0);
       this.scene.add(group);
-      // Arch frame
-      const colGeo = rbox(0.8, 6, 0.9, 0.3);
-      for (const sx of [-2.1, 2.1]) {
-        const c = new THREE.Mesh(colGeo, darkStone);
-        c.position.set(sx, 3, 0.2);
-        c.castShadow = true;
-        group.add(c);
+      // Arch: jamb stones in courses, a semicircular ring of wedge voussoirs and a keystone.
+      const f = { x: base.x, y: 0, z: base.z, yaw: Math.atan2(-base.x, -base.z) };
+      for (const sx of [-2.15, 2.15]) {
+        for (let k = 0; k < 6; k++) {
+          const wide = k % 2 === 0;
+          this._batchLocal(darkStone, rbox(wide ? 0.95 : 0.8, 0.66, 1.0, 0.06), f, sx + (wide ? Math.sign(sx) * 0.07 : 0), 0.34 + k * 0.68, 0.2);
+        }
+        this._batchLocal(darkStone, rbox(1.1, 0.3, 1.15, 0.05), f, sx, 4.22, 0.2); // impost
       }
-      const lintel = new THREE.Mesh(rbox(5.2, 0.9, 1.0, 0.35), darkStone);
-      lintel.position.set(0, 6.3, 0.2);
-      lintel.castShadow = true;
-      group.add(lintel);
-      const grate = new THREE.Mesh(rbox(5.0, 0.15, 1.2, 0.07), metal);
-      grate.position.set(0, 0.07, 0.4);
-      group.add(grate);
-      const portal = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 5.6), portalMat.clone());
-      portal.position.set(0, 2.9, 0.05);
+      const voussoir = rbox(0.62, 0.9, 1.0, 0.06);
+      const n = 11;
+      for (let k = 0; k < n; k++) {
+        const t = (k + 0.5) / n;
+        const ang = Math.PI * (1 - t);
+        const key = k === (n - 1) / 2;
+        const rr = 2.15 + (key ? 0.06 : 0);
+        this._batchLocal(darkStone, key ? rbox(0.72, 1.15, 1.12, 0.06) : voussoir, f, Math.cos(ang) * rr, 4.37 + Math.sin(ang) * rr, 0.2, 0, 0, ang - Math.PI / 2);
+      }
+      // Raised portcullis: iron bars and cross straps under the arch.
+      for (let k = -4; k <= 4; k++) {
+        this._batchLocal(metal, new THREE.CylinderGeometry(0.035, 0.035, 2.2, 8), f, k * 0.42, 5.3, 0.65);
+        this._batchLocal(metal, new THREE.ConeGeometry(0.05, 0.22, 8), f, k * 0.42, 4.1, 0.65, Math.PI);
+      }
+      for (const yy of [4.5, 5.4, 6.2]) this._batchLocal(metal, rbox(3.6, 0.08, 0.05, 0.015), f, 0, yy, 0.65);
+      // Threshold grate
+      this._batchLocal(metal, rbox(4.2, 0.08, 1.4, 0.03), f, 0, 0.04, 0.6);
+      for (let k = -6; k <= 6; k++) this._batchLocal(metal, rbox(0.04, 0.03, 1.36, 0.01), f, k * 0.3, 0.09, 0.6);
+      const portal = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 6.4), portalMat.clone());
+      portal.position.set(0, 3.2, 0.05);
       group.add(portal);
-      const light = new THREE.PointLight(0xff2a14, 18, 16, 1.7);
-      light.position.copy(base).addScaledVector(dirIn, 2).setY(2.8);
+      const light = new THREE.PointLight(0xff2a14, 18, 18, 1.5);
+      light.position.copy(base).addScaledVector(dirIn, 2.6).setY(3.6);
       this.scene.add(light);
       this.gates.push({ pos: base.clone().addScaledVector(dirIn, 2.2), dirIn, portal, light, pulse: 0 });
     }
@@ -574,14 +710,25 @@ export class World {
     spots.forEach(([x, z], i) => {
       const y = 9.5;
       const chainLen = 26 - y;
-      const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, chainLen, 8), metal);
-      chain.position.set(x, y + chainLen / 2, z);
-      this.scene.add(chain);
-      const housing = new THREE.Mesh(new THREE.SphereGeometry(0.8, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.45), metal);
-      housing.position.set(x, y - 0.12, z);
-      housing.scale.set(1, 0.75, 1);
-      housing.material.side = THREE.DoubleSide;
-      this.scene.add(housing);
+      // Forged chain: alternating links all the way up to the crown.
+      const link = new THREE.TorusGeometry(0.06, 0.016, 6, 12);
+      link.scale(1, 1.6, 1);
+      for (let k = 0; k < chainLen / 0.15; k++) {
+        this._batch(metal, link, x, y + 0.75 + k * 0.15, z, 0, (k % 2) * Math.PI / 2, 0, 1, 1, 1, false);
+      }
+      // Industrial shade with a rolled rim, a socket, and a wire guard around the bulb.
+      const shade = new THREE.Mesh(new THREE.SphereGeometry(0.8, 32, 12, 0, Math.PI * 2, 0, Math.PI * 0.45), metal.clone());
+      shade.material.side = THREE.DoubleSide;
+      shade.position.set(x, y - 0.12, z);
+      shade.scale.set(1, 0.75, 1);
+      this.scene.add(shade);
+      this._batch(metal, new THREE.TorusGeometry(0.62, 0.025, 8, 48), x, y + 0.12, z, Math.PI / 2);
+      this._batch(metal, new THREE.CylinderGeometry(0.1, 0.12, 0.25, 16), x, y + 0.55, z);
+      this._batch(metal, new THREE.TorusGeometry(0.28, 0.008, 6, 32), x, y - 0.1, z, Math.PI / 2, 0, 0, 1, 1, 1, false);
+      for (let k = 0; k < 6; k++) {
+        const g = new THREE.TorusGeometry(0.28, 0.008, 6, 24, Math.PI);
+        this._batch(metal, g, x, y + 0.12, z, Math.PI, (k / 6) * Math.PI, 0, 1, 1, 1, false);
+      }
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 20, 14), amberGlow.clone());
       bulb.position.set(x, y - 0.05, z);
       this.scene.add(bulb);
@@ -673,6 +820,76 @@ export class World {
     inst.castShadow = true;
     inst.receiveShadow = true;
     this.scene.add(inst);
+  }
+
+  _buildWallDetail() {
+    const { concrete, darkStone, metal, rust } = this._materials();
+    const Rw = WALL_RADIUS;
+    // Continuous mouldings around the inner face: plinth, string course and cornice.
+    const ring = (profile) => this._batch(darkStone, lathe(profile, 256), 0, 0, 0);
+    ring([[Rw + 0.2, 0.9], [Rw - 0.25, 0.9], [Rw - 0.35, 0.8], [Rw - 0.35, 0.12], [Rw - 0.42, 0.05], [Rw - 0.42, 0], [Rw + 0.2, 0]].reverse());
+    ring([[Rw + 0.2, 4.5], [Rw - 0.2, 4.5], [Rw - 0.25, 4.42], [Rw - 0.25, 4.25], [Rw - 0.2, 4.2], [Rw + 0.2, 4.2]].reverse());
+    ring([[Rw + 0.2, 9.4], [Rw - 0.5, 9.4], [Rw - 0.55, 9.3], [Rw - 0.45, 9.1], [Rw - 0.3, 8.95], [Rw - 0.25, 8.8], [Rw + 0.2, 8.8]].reverse());
+
+    // Pipe runs between the gates with wall brackets and flanged joints.
+    const gap = 0.16; // radians kept clear around each gate
+    for (let k = 0; k < 6; k++) {
+      const start = (k / 6) * Math.PI * 2 + gap;
+      const arc = Math.PI / 3 - gap * 2;
+      for (const [yy, r, tube] of [[5.25, Rw - 0.32, 0.13], [5.62, Rw - 0.26, 0.07]]) {
+        this._batch(k % 2 ? rust : metal, new THREE.TorusGeometry(r, tube, 10, 96, arc), 0, yy, 0, Math.PI / 2, -start, 0);
+      }
+      const steps = 7;
+      for (let j = 0; j <= steps; j++) {
+        const ang = start + (arc * j) / steps;
+        const cx = Math.cos(ang), cz = Math.sin(ang);
+        const yaw = Math.atan2(-cx, -cz);
+        this._batch(metal, rbox(0.12, 0.62, 0.36, 0.02), cx * (Rw - 0.2), 5.42, cz * (Rw - 0.2), 0, yaw);
+        if (j % 2 === 1) {
+          this._batch(metal, new THREE.CylinderGeometry(0.17, 0.17, 0.08, 20), cx * (Rw - 0.32), 5.25, cz * (Rw - 0.32), Math.PI / 2, yaw + Math.PI / 2, 0);
+        }
+      }
+      // A vertical downpipe into a drain at the end of each run.
+      const ang = start + arc;
+      const cx = Math.cos(ang), cz = Math.sin(ang);
+      this._batch(rust, new THREE.CylinderGeometry(0.09, 0.09, 5.2, 14), cx * (Rw - 0.3), 2.6, cz * (Rw - 0.3));
+      this._batch(rust, new THREE.TorusGeometry(0.12, 0.09, 10, 20, Math.PI / 2), cx * (Rw - 0.42), 5.2, cz * (Rw - 0.42), 0, Math.atan2(-cx, -cz) + Math.PI / 2, 0);
+    }
+
+    // Stone caps on the buttresses.
+    for (let i = 0; i < 16; i++) {
+      const a = ((i + 0.5) / 16) * Math.PI * 2;
+      const bh = 15 + (i % 3) * 1.5;
+      const rr = Rw + 0.75 - 1.4;
+      this._batch(concrete, taper(rbox(2.0, 1.2, 2.6, 0.3), 0.35), Math.cos(a) * rr, bh + 0.5, Math.sin(a) * rr, 0, Math.atan2(-Math.cos(a), -Math.sin(a)));
+    }
+  }
+
+  _buildFloorDetail() {
+    const { darkStone, metal, concrete } = this._materials();
+    // Round iron drain covers set into the flagstones.
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+      const x = Math.cos(a) * 9, z = Math.sin(a) * 9;
+      this._batch(darkStone, lathe([[0.62, 0], [0.62, 0.02], [0.55, 0.035], [0.5, 0.01], [0, 0.01]], 48), x, 0, z, 0, 0, 0, 1, 1, 1, false);
+      this._batch(metal, new THREE.TorusGeometry(0.46, 0.035, 8, 48), x, 0.015, z, Math.PI / 2, 0, 0, 1, 1, 1, false);
+      for (let j = -4; j <= 4; j++) {
+        const len = 2 * Math.sqrt(Math.max(0, 0.44 * 0.44 - (j * 0.1) ** 2));
+        if (len > 0.05) this._batch(metal, rbox(0.04, 0.03, len, 0.01), x + j * 0.1, 0.02, z, 0, a, 0, 1, 1, 1, false);
+      }
+    }
+    // Scattered debris: broken bricks and stone chips.
+    const brick = rbox(0.22, 0.07, 0.1, 0.02);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let k = 0; k < 140; k++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 7 + rnd() * 27;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      if (Math.abs(x) < 7 && Math.abs(z) < 7) continue;
+      if (rnd() < 0.45) this._batch(concrete, brick, x, 0.035, z, 0, rnd() * 6, rnd() < 0.2 ? 0.3 : 0, 0.7 + rnd() * 0.6, 1, 1, false);
+      else this._batch(concrete, pebble(0.05 + rnd() * 0.09, k), x, 0.03, z, rnd(), rnd() * 6, 0, 1, 1, 1, false);
+    }
   }
 
   _buildRain() {
@@ -798,7 +1015,7 @@ export class World {
     this.skyMat.uniforms.uFlash.value = strobe;
     this.rainMat.uniforms.uFlash.value = strobe;
     this.moon.intensity = this.moonBase + strobe * 5;
-    this.hemi.intensity = 0.55 + strobe * 1.5;
+    this.hemi.intensity = 0.9 + strobe * 1.5;
 
     // Monolith breathing, dims with the player's life
     const life = this.monolithLife;
@@ -838,7 +1055,7 @@ export class World {
       g.pulse = Math.max(0, g.pulse - dt * 0.7);
       g.portal.material.uniforms.uTime.value = t;
       g.portal.material.uniforms.uPulse.value = g.pulse;
-      g.light.intensity = 14 + 6 * Math.sin(t * 2 + g.pos.x) + g.pulse * 90;
+      g.light.intensity = 24 + 8 * Math.sin(t * 2 + g.pos.x) + g.pulse * 90;
     }
 
     // Banners sway

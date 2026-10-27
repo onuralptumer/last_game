@@ -75,76 +75,8 @@ function paint(c, fn) {
   return ctx;
 }
 
-function drawCracks(ctx, rand, count, size, color, width) {
-  ctx.strokeStyle = color;
-  ctx.lineCap = 'round';
-  for (let i = 0; i < count; i++) {
-    let x = rand() * size, y = rand() * size;
-    let a = rand() * Math.PI * 2;
-    ctx.lineWidth = width * (0.5 + rand());
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    const n = 8 + rand() * 20;
-    for (let j = 0; j < n; j++) {
-      a += (rand() - 0.5) * 1.2;
-      x += Math.cos(a) * 6;
-      y += Math.sin(a) * 6;
-      ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-}
-
-// Floor: 4x4 concrete slabs per tile.
-export function floorTextures() {
-  const S = 1024;
-  const n = makeNoise(7, 32);
-  const n2 = makeNoise(13, 16);
-  const rand = mulberry32(99);
-  const slabTint = [];
-  for (let i = 0; i < 16; i++) slabTint.push(0.82 + rand() * 0.3);
-
-  const colC = canvas(S, S);
-  const bumpC = canvas(S, S);
-  const slab = S / 4;
-  const groove = (x, y) => {
-    const gx = Math.min(x % slab, slab - (x % slab));
-    const gy = Math.min(y % slab, slab - (y % slab));
-    return Math.min(gx, gy);
-  };
-  const ctx = paint(colC, (x, y) => {
-    const u = (x / S) * 32, v = (y / S) * 32;
-    const f = fbm(n, u, v, 5);
-    const big = fbm(n2, (x / S) * 16, (y / S) * 16, 3);
-    const tint = slabTint[(Math.floor(y / slab) * 4 + Math.floor(x / slab)) % 16];
-    let c = (0.2 + f * 0.25 + (big - 0.5) * 0.18) * tint;
-    const g = groove(x, y);
-    if (g < 3) c *= 0.25;
-    else if (g < 6) c *= 0.7;
-    const r = c * 205, gg = c * 212, b = c * 225;
-    return [r, gg, b];
-  });
-  drawCracks(ctx, rand, 26, S, 'rgba(10,10,14,0.55)', 1.4);
-  // dark stains
-  for (let i = 0; i < 18; i++) {
-    const x = rand() * S, y = rand() * S, r = 30 + rand() * 90;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(8,8,10,0.35)');
-    g.addColorStop(1, 'rgba(8,8,10,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
-  }
-
-  const bctx = paint(bumpC, (x, y) => {
-    const f = fbm(n, (x / S) * 24, (y / S) * 24, 3);
-    const g = groove(x, y);
-    let c = 0.65 + f * 0.3;
-    if (g < 4) c *= 0.2 + (g / 4) * 0.6;
-    return [c * 255, c * 255, c * 255];
-  });
-  drawCracks(bctx, mulberry32(99), 26, S, 'rgba(0,0,0,0.9)', 1.4);
-
-  // Puddle roughness map covering the whole arena (not tiled).
+// Puddle roughness map covering the whole arena floor (not tiled): wet patches are mirror-smooth.
+export function puddleMap() {
   const R = 512;
   const rn = makeNoise(42, 8);
   const roughC = canvas(R, R);
@@ -157,48 +89,7 @@ export function floorTextures() {
     r = Math.min(1, r);
     return [r * 255, r * 255, r * 255];
   });
-
-  return {
-    map: toTexture(colC),
-    bump: toTexture(bumpC, { srgb: false }),
-    rough: toTexture(roughC, { srgb: false }),
-  };
-}
-
-// Wall concrete with panel seams and rain streaks.
-export function wallTextures() {
-  const W = 512, H = 1024;
-  const n = makeNoise(3, 16);
-  const rand = mulberry32(5);
-  const streaks = new Float32Array(W);
-  for (let i = 0; i < W; i++) streaks[i] = 0;
-  for (let i = 0; i < 60; i++) {
-    const x = Math.floor(rand() * W), w = 2 + Math.floor(rand() * 12), s = rand() * 0.5;
-    for (let k = 0; k < w; k++) streaks[(x + k) % W] += s * Math.sin((k / w) * Math.PI);
-  }
-  const c = canvas(W, H);
-  paint(c, (x, y) => {
-    const f = fbm(n, (x / W) * 8, (y / H) * 16, 5);
-    let v = 0.22 + f * 0.3;
-    const drip = streaks[x] * (1 - y / H) * 0.35;
-    v *= 1 - Math.min(0.6, drip);
-    const seam = y % 256 < 4 || x % 256 < 3;
-    if (seam) v *= 0.35;
-    // tie holes
-    const hx = x % 128, hy = y % 128;
-    if ((hx - 64) ** 2 + (hy - 64) ** 2 < 20) v *= 0.3;
-    return [v * 200, v * 205, v * 215];
-  });
-  const b = canvas(W, H);
-  paint(b, (x, y) => {
-    const f = fbm(n, (x / W) * 32, (y / H) * 64, 3);
-    let v = 0.55 + f * 0.45;
-    if (y % 256 < 4 || x % 256 < 3) v = 0.1;
-    const hx = x % 128, hy = y % 128;
-    if ((hx - 64) ** 2 + (hy - 64) ** 2 < 20) v = 0.1;
-    return [v * 255, v * 255, v * 255];
-  });
-  return { map: toTexture(c), bump: toTexture(b, { srgb: false }) };
+  return toTexture(roughC, { srgb: false });
 }
 
 // Glowing glyphs for the monolith.
@@ -248,41 +139,6 @@ export function runeTexture() {
     ctx.lineTo((W / cols) * col, H);
     ctx.stroke();
   }
-  return toTexture(c);
-}
-
-export function crateTexture() {
-  const S = 256;
-  const c = canvas(S, S);
-  const n = makeNoise(21, 8);
-  const ctx = paint(c, (x, y) => {
-    const f = fbm(n, (x / S) * 8, (y / S) * 8, 4);
-    const v = 0.18 + f * 0.15;
-    return [v * 210, v * 200, v * 190];
-  });
-  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-  ctx.lineWidth = 10;
-  ctx.strokeRect(5, 5, S - 10, S - 10);
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  ctx.moveTo(10, 10);
-  ctx.lineTo(S - 10, S - 10);
-  ctx.stroke();
-  // hazard band
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(14, S - 50, S - 28, 26);
-  ctx.clip();
-  for (let x = -40; x < S + 40; x += 24) {
-    ctx.fillStyle = 'rgba(190,120,20,0.55)';
-    ctx.beginPath();
-    ctx.moveTo(x, S - 50);
-    ctx.lineTo(x + 12, S - 50);
-    ctx.lineTo(x - 14, S - 24);
-    ctx.lineTo(x - 26, S - 24);
-    ctx.fill();
-  }
-  ctx.restore();
   return toTexture(c);
 }
 

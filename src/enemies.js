@@ -20,7 +20,7 @@ function geo(key, fn) {
   return geoCache.get(key);
 }
 // All enemy parts are soft, smooth forms: rounded boxes, capsules, high-segment curves.
-const BOX = (w, h, d, r = null) => geo(`b${w},${h},${d},${r}`, () => rbox(w, h, d, r === null ? Math.min(w, h, d) * 0.32 : r, 3));
+const BOX = (w, h, d, r = null) => geo(`b${w},${h},${d},${r}`, () => rbox(w, h, d, r === null ? Math.min(w, h, d) * 0.32 : r, 2));
 const CYL = (rt, rb, h, s = 8) => geo(`c${rt},${rb},${h}`, () => new THREE.CylinderGeometry(rt, rb, h, Math.max(16, s * 2)));
 const LIMB = (r, len) => geo(`l${r},${len}`, () => capsule(r, len, 14));
 const SPH = (r, w = 12, h = 8) => geo(`s${r}`, () => new THREE.SphereGeometry(r, Math.max(24, w), Math.max(16, h)));
