@@ -250,6 +250,12 @@ export class World {
       s.set(1, 15 + (i % 3) * 1.5, 1);
       m.compose(p, q, s);
       binst.setMatrixAt(i, m);
+      // Two cylinders approximate the buttress footprint so the player can't walk into it.
+      const tx = -Math.sin(a), tz = Math.cos(a);
+      const cr = rr - 0.75;
+      for (const off of [-0.55, 0.55]) {
+        this.colliders.push(cylCollider(Math.cos(a) * cr + tx * off, Math.sin(a) * cr + tz * off, 0.85, 0, 15));
+      }
     }
     binst.castShadow = binst.receiveShadow = true;
     this.scene.add(binst);
@@ -387,7 +393,11 @@ export class World {
         // fallen chunk next to the broken pillar
         const chunk = this._mesh(new THREE.CylinderGeometry(1.05, 1.1, 3.4, 8), concrete, x + Math.cos(a + 1.4) * 2.6, 1.05, z + Math.sin(a + 1.4) * 2.6);
         chunk.rotation.set(Math.PI / 2, 0, a + 0.4);
-        this.colliders.push(cylCollider(chunk.position.x, chunk.position.z, 1.3, 0, 2.1));
+        // The chunk lies on its side; cover its whole length with three cylinders.
+        const ax = -Math.sin(a + 0.4), az = Math.cos(a + 0.4);
+        for (const off of [-1.15, 0, 1.15]) {
+          this.colliders.push(cylCollider(chunk.position.x + ax * off, chunk.position.z + az * off, 1.1, 0, 2.15));
+        }
       }
       this.colliders.push(cylCollider(x, z, 1.5, 0, h));
     }

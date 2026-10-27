@@ -7,6 +7,25 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 
+// Replaces NaN/Inf pixels and clamps extreme HDR values before bloom. Some GPUs/drivers
+// (notably Direct3D via ANGLE) produce the odd NaN, e.g. normalize(0) in bump mapping at
+// grazing angles, or overflow half floats near very bright lights; bloom's blur would
+// otherwise smear a single bad pixel into large black blocks across the screen.
+const SanitizeShader = {
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse; varying vec2 vUv;
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv);
+      bool bad = any(isnan(c.rgb)) || any(isinf(c.rgb)) || !(abs(c.r + c.g + c.b) < 1e6);
+      vec3 col = bad ? vec3(0.0) : clamp(c.rgb, 0.0, 256.0);
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+};
+
 const GradeShader = {
   uniforms: {
     tDiffuse: { value: null },
@@ -61,11 +80,13 @@ export class Post {
     this.weaponPass = new RenderPass(wScene, wCamera);
     this.weaponPass.clear = false;
     this.weaponPass.clearDepth = true;
+    this.sanitize = new ShaderPass(SanitizeShader);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.85, 0.55, 0.82);
     this.grade = new ShaderPass(GradeShader);
     this.output = new OutputPass();
     this.composer.addPass(this.mainPass);
     this.composer.addPass(this.weaponPass);
+    this.composer.addPass(this.sanitize);
     this.composer.addPass(this.bloom);
     this.composer.addPass(this.grade);
     this.composer.addPass(this.output);

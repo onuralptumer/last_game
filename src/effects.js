@@ -43,9 +43,11 @@ class ParticlePool {
         attribute vec3 aColor; attribute float aSize; attribute float aAlpha;
         uniform float uScale; varying vec3 vColor; varying float vAlpha;
         void main(){
-          vColor = aColor; vAlpha = aAlpha;
           vec4 mv = modelViewMatrix*vec4(position,1.0);
-          gl_PointSize = aSize * uScale / max(-mv.z, 0.1);
+          float dist = -mv.z;
+          vColor = aColor;
+          vAlpha = aAlpha * smoothstep(0.4, 2.0, dist);
+          gl_PointSize = min(aSize * uScale / max(dist, 0.1), uScale * 0.35);
           gl_Position = projectionMatrix*mv;
         }`,
       fragmentShader: additive
@@ -397,7 +399,7 @@ export class Effects {
     this.add.spawn(pos.x, pos.y, pos.z, (Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.3, c.r, c.g, c.b, size, life, { sizeEnd: 0, floor: false });
   }
 
-  update(dt, groundAt) {
+  update(dt, groundAt, camPos) {
     this.add.update(dt);
     this.smoke.update(dt);
     for (const T of this.tracers) {
@@ -448,7 +450,7 @@ export class Effects {
       m.rotation.y += G.spin.y * dt;
       m.rotation.z += G.spin.z * dt;
       if (G.life < 0.6) m.scale.setScalar(G.scale * (G.life / 0.6));
-      if (G.life <= 0) m.visible = false;
+      m.visible = G.life > 0 && !(camPos && m.position.distanceToSquared(camPos) < 0.8 * 0.8);
     }
   }
 }

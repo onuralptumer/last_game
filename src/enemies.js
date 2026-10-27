@@ -439,7 +439,7 @@ export class EnemyManager {
     const center = _v.copy(e.pos).setY(e.pos.y + (e.def.flying && e.type !== 'warden' ? 0 : e.def.height * 0.5));
     const scale = e.type === 'warden' ? 4 : e.type === 'brute' ? 2 : 1;
     this.fx.deathBurst(center, e.def.glow, scale);
-    this.fx.gibBurst(center, e.def.glow, e.type === 'warden' ? 30 : e.type === 'brute' ? 18 : 9, scale * 0.8, scale > 1 ? 1.4 : 1);
+    this.fx.gibBurst(center, e.def.glow, e.type === 'warden' ? 30 : e.type === 'brute' ? 18 : 9, Math.min(1, scale * 0.7), scale > 1 ? 1.4 : 1);
     if (e.type === 'warden') this.fx.explosion(center, 8, 0xff3030);
     this.scene.remove(e.root);
     if (this.onKill) this.onKill(e, center.clone());
@@ -625,6 +625,29 @@ export class EnemyManager {
       }
     }
 
+    // Keep enemies out of the player's personal space so their bodies never
+    // envelop the camera (a crowd could otherwise blind the player completely).
+    for (const e of list) {
+      if (e.dead) continue;
+      const bottom = e.type === 'wisp' ? e.pos.y - 0.7 : e.pos.y;
+      const top = e.type === 'wisp' ? e.pos.y + 0.7 : e.pos.y + e.def.height;
+      if (top < player.pos.y || bottom > player.pos.y + player.height) continue;
+      const dx = e.pos.x - player.pos.x, dz = e.pos.z - player.pos.z;
+      const min = e.radius + player.radius + 0.35;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= min * min) continue;
+      const d = Math.sqrt(d2);
+      const nx = d > 1e-4 ? dx / d : Math.sin(e.yaw + Math.PI), nz = d > 1e-4 ? dz / d : Math.cos(e.yaw + Math.PI);
+      e.pos.x = player.pos.x + nx * min;
+      e.pos.z = player.pos.z + nz * min;
+      // Kill velocity heading into the player (e.g. a pouncing stalker).
+      const into = e.vel.x * -nx + e.vel.z * -nz;
+      if (into > 0) {
+        e.vel.x += nx * into;
+        e.vel.z += nz * into;
+      }
+    }
+
     const boss = this.bossAlive;
     if (boss) {
       this.bossLight.position.set(boss.pos.x, boss.pos.y + 5.5, boss.pos.z).addScaledVector(_dir.set(Math.sin(boss.yaw), 0, Math.cos(boss.yaw)), 2.5);
@@ -709,6 +732,7 @@ export class EnemyManager {
     if (e.state === 'chase') {
       const s = this._steer(e, player.pos.x, player.pos.z);
       mx = s.x; mz = s.z;
+      sp *= Math.max(0, Math.min(1, (d3 - 1.25) / 0.8));
       if (d3 < 1.7 && dy < 1.6 && e.attackCd <= 0) {
         e.state = 'attack';
         e.stateT = 0;
@@ -717,7 +741,7 @@ export class EnemyManager {
       }
       if (Math.random() < dt * 0.08) this.audio.play('growl', ctx.spatial(e.pos, 0.4));
     } else if (e.state === 'attack') {
-      sp = e.speed * 0.25;
+      sp = d3 > 1.4 ? e.speed * 0.25 : 0;
       const s = this._steer(e, player.pos.x, player.pos.z);
       mx = s.x; mz = s.z;
       if (e.stateT > 0.38 && !e.struck) {

@@ -952,7 +952,7 @@ export class Game {
 
     const live = s === 'playing' || s === 'dead' || s === 'paused' || s === 'intermission';
     this.world.update(dt * (s === 'paused' ? 0.2 : 1), this.camera.position);
-    if (s !== 'paused') this.fx.update(dt * this.timeScale, (x, z, y) => groundHeight(this.world.colliders, x, z, 0.1, y));
+    if (s !== 'paused') this.fx.update(dt * this.timeScale, (x, z, y) => groundHeight(this.world.colliders, x, z, 0.1, y), this.camera.position);
     this._updateFlashlight(live && s !== 'over');
 
     this.audio.update(s === 'playing' && this.waveActive && this.enemies.list.length ? 1 : 0);
