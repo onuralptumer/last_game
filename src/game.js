@@ -10,6 +10,7 @@ import { EnemyManager, ENEMY_TYPES } from './enemies.js';
 import { UI } from './ui.js';
 import { Post } from './post.js';
 import { raycastWorld, raySphere, groundHeight } from './physics.js';
+import { rbox } from './shapes.js';
 import {
   PERKS, rollCards, loadSave, writeSave, loadSettings, writeSettings, baseMods, embersForRun,
 } from './progression.js';
@@ -91,7 +92,7 @@ export class Game {
 
     this._initPickups();
     this.grenades = [];
-    this.grenadeGeo = new THREE.SphereGeometry(0.13, 10, 8);
+    this.grenadeGeo = new THREE.SphereGeometry(0.13, 20, 14);
     this.grenadeMat = new THREE.MeshStandardMaterial({ color: 0x1a1210, emissive: 0xff6a20, emissiveIntensity: 3 });
 
     this.ctx = {
@@ -812,20 +813,23 @@ export class Game {
     const ammoGlow = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0xffb040, emissiveIntensity: 3 });
     const armorMat = new THREE.MeshStandardMaterial({ color: 0x0a1422, emissive: 0x3a8aff, emissiveIntensity: 2.5, metalness: 0.6, roughness: 0.3 });
     this.pickupTemplates = {
-      shard: () => new THREE.Mesh(new THREE.OctahedronGeometry(0.13, 0), shardMat),
+      shard: () => {
+        const m = new THREE.Mesh(this._shardGeo || (this._shardGeo = new THREE.SphereGeometry(0.09, 16, 12).scale(1, 1.7, 1)), shardMat);
+        return m;
+      },
       health: () => {
         const g = new THREE.Group();
-        g.add(new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.13, 0.13), healthMat));
-        g.add(new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.42, 0.13), healthMat));
+        g.add(new THREE.Mesh(rbox(0.42, 0.13, 0.13, 0.06), healthMat));
+        g.add(new THREE.Mesh(rbox(0.13, 0.42, 0.13, 0.06), healthMat));
         return g;
       },
       ammo: () => {
         const g = new THREE.Group();
-        g.add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.32), ammoBody));
-        g.add(new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.06, 0.34), ammoGlow));
+        g.add(new THREE.Mesh(rbox(0.5, 0.3, 0.32, 0.07), ammoBody));
+        g.add(new THREE.Mesh(rbox(0.52, 0.06, 0.34, 0.028), ammoGlow));
         return g;
       },
-      armor: () => new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.1, 6), armorMat),
+      armor: () => new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.06, 16, 40), armorMat),
     };
   }
 

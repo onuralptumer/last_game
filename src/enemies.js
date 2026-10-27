@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { resolveActor, groundHeight, raycastWorld, ARENA_RADIUS } from './physics.js';
 import { glowTexture } from './textures.js';
+import { rbox, capsule, pebble } from './shapes.js';
 
 export const ENEMY_TYPES = {
   husk: { name: 'Husk', hp: 55, speed: 4.4, radius: 0.45, height: 1.9, damage: 12, shards: 2, score: 100, glow: 0xff2a14, mass: 1 },
@@ -18,12 +19,14 @@ function geo(key, fn) {
   if (!geoCache.has(key)) geoCache.set(key, fn());
   return geoCache.get(key);
 }
-const BOX = (w, h, d) => geo(`b${w},${h},${d}`, () => new THREE.BoxGeometry(w, h, d));
-const CYL = (rt, rb, h, s = 8) => geo(`c${rt},${rb},${h},${s}`, () => new THREE.CylinderGeometry(rt, rb, h, s));
-const SPH = (r, w = 12, h = 8) => geo(`s${r},${w},${h}`, () => new THREE.SphereGeometry(r, w, h));
-const ICO = (r, d = 0) => geo(`i${r},${d}`, () => new THREE.IcosahedronGeometry(r, d));
-const CONE = (r, h, s = 6) => geo(`k${r},${h},${s}`, () => new THREE.ConeGeometry(r, h, s));
-const TOR = (r, t, rs = 6, ts = 32) => geo(`t${r},${t},${rs},${ts}`, () => new THREE.TorusGeometry(r, t, rs, ts));
+// All enemy parts are soft, smooth forms: rounded boxes, capsules, high-segment curves.
+const BOX = (w, h, d, r = null) => geo(`b${w},${h},${d},${r}`, () => rbox(w, h, d, r === null ? Math.min(w, h, d) * 0.32 : r, 3));
+const CYL = (rt, rb, h, s = 8) => geo(`c${rt},${rb},${h}`, () => new THREE.CylinderGeometry(rt, rb, h, Math.max(16, s * 2)));
+const LIMB = (r, len) => geo(`l${r},${len}`, () => capsule(r, len, 14));
+const SPH = (r, w = 12, h = 8) => geo(`s${r}`, () => new THREE.SphereGeometry(r, Math.max(24, w), Math.max(16, h)));
+const ICO = (r, d = 0) => geo(`i${r}`, () => new THREE.IcosahedronGeometry(r, Math.max(3, d)));
+const CONE = (r, h, s = 6) => geo(`k${r},${h}`, () => new THREE.ConeGeometry(r, h, Math.max(16, s * 2)));
+const TOR = (r, t, rs = 6, ts = 32) => geo(`t${r},${t}`, () => new THREE.TorusGeometry(r, t, Math.max(12, rs), Math.max(64, ts)));
 
 function add(parent, geometry, mat, x = 0, y = 0, z = 0) {
   const m = new THREE.Mesh(geometry, mat);
@@ -41,7 +44,7 @@ function pivot(parent, x, y, z) {
 
 // Standard material plus a fresnel rim glow so silhouettes stay readable in the dark.
 function skinMat(color, rough = 0.55, metal = 0.25, rim = 0xff3020, rimStrength = 0.7) {
-  const m = new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, emissive: 0x000000, flatShading: true });
+  const m = new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, emissive: 0x000000 });
   const uRim = { value: new THREE.Color(rim).multiplyScalar(rimStrength) };
   m.userData.rim = uRim;
   m.onBeforeCompile = (shader) => {
@@ -50,7 +53,7 @@ function skinMat(color, rough = 0.55, metal = 0.25, rim = 0xff3020, rimStrength 
       .replace('#include <common>', '#include <common>\nuniform vec3 uRim;')
       .replace(
         '#include <emissivemap_fragment>',
-        '#include <emissivemap_fragment>\n{ float rimF = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0); totalEmissiveRadiance += uRim * pow(rimF, 2.5); }'
+        '#include <emissivemap_fragment>\n{ float rimF = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0); totalEmissiveRadiance += uRim * pow(rimF, 4.0) * 0.85; }'
       );
   };
   m.customProgramCacheKey = () => 'enemy-rim';
@@ -66,10 +69,10 @@ function buildHusk() {
   const bone = skinMat(0x5a534c, 0.7, 0.1, 0xff3020, 0.5);
   const glow = glowMat(0xff2a14, 6);
   const body = pivot(root, 0, 0.95, 0);
-  add(body, BOX(0.38, 0.22, 0.24), skin);
+  add(body, BOX(0.38, 0.22, 0.24, 0.1), skin);
   const torso = pivot(body, 0, 0.1, 0);
   torso.rotation.x = 0.45;
-  add(torso, BOX(0.5, 0.6, 0.32), skin, 0, 0.35, 0);
+  add(torso, BOX(0.5, 0.6, 0.32, 0.15), skin, 0, 0.35, 0);
   add(torso, SPH(0.08, 8, 6), glow, 0, 0.38, 0.16);
   for (let i = 0; i < 3; i++) {
     const s = add(torso, CONE(0.05, 0.22, 4), bone, 0, 0.2 + i * 0.18, -0.2);
@@ -84,9 +87,9 @@ function buildHusk() {
   const arms = [];
   for (const sx of [-1, 1]) {
     const sh = pivot(torso, sx * 0.33, 0.55, 0);
-    add(sh, CYL(0.06, 0.05, 0.5, 6), skin, 0, -0.25, 0);
+    add(sh, LIMB(0.06, 0.56), skin, 0, -0.25, 0);
     const el = pivot(sh, 0, -0.5, 0);
-    add(el, CYL(0.05, 0.035, 0.55, 6), skin, 0, -0.27, 0);
+    add(el, LIMB(0.045, 0.58), skin, 0, -0.27, 0);
     for (let c = -1; c <= 1; c++) {
       const claw = add(el, CONE(0.02, 0.22, 4), bone, c * 0.035, -0.62, 0.02);
       claw.rotation.x = Math.PI;
@@ -96,9 +99,9 @@ function buildHusk() {
   const legs = [];
   for (const sx of [-1, 1]) {
     const hip = pivot(body, sx * 0.14, -0.05, 0);
-    add(hip, CYL(0.075, 0.06, 0.48, 6), skin, 0, -0.24, 0);
+    add(hip, LIMB(0.075, 0.55), skin, 0, -0.24, 0);
     const knee = pivot(hip, 0, -0.48, 0);
-    add(knee, CYL(0.06, 0.04, 0.46, 6), skin, 0, -0.23, 0);
+    add(knee, LIMB(0.055, 0.52), skin, 0, -0.23, 0);
     legs.push({ hip, knee });
   }
   return {
@@ -137,11 +140,11 @@ function buildStalker() {
     hip.rotation.y = side * (zs[i % 3] * 0.8);
     const up = pivot(hip, 0, 0, 0);
     up.rotation.z = side * -0.9;
-    const u = add(up, CYL(0.035, 0.03, 0.6, 5), bone, side * 0.3, 0, 0);
+    const u = add(up, LIMB(0.035, 0.66), bone, side * 0.3, 0, 0);
     u.rotation.z = Math.PI / 2;
     const knee = pivot(up, side * 0.6, 0, 0);
     knee.rotation.z = side * 2.0;
-    const l = add(knee, CYL(0.03, 0.01, 0.85, 5), dark, side * 0.42, 0, 0);
+    const l = add(knee, CYL(0.03, 0.008, 0.85), dark, side * 0.42, 0, 0);
     l.rotation.z = Math.PI / 2;
     legs.push({ hip, up, phase: (i % 2) * Math.PI + (i % 3) * 0.5, side });
   }
@@ -237,7 +240,7 @@ function buildWarden() {
   const plate = skinMat(0x45434c, 0.3, 0.9, 0xff4030, 0.9);
   const glow = glowMat(0xff3030, 6);
   const eyeMat = glowMat(0xffd0c0, 2.2);
-  const robe = add(root, geo('wardenRobe', () => new THREE.CylinderGeometry(0.7, 2.0, 3.8, 12, 1, true)), cloth, 0, 2.0, 0);
+  const robe = add(root, geo('wardenRobe', () => new THREE.CylinderGeometry(0.7, 2.0, 3.8, 40, 6, true)), cloth, 0, 2.0, 0);
   const chest = pivot(root, 0, 4.3, 0);
   add(chest, BOX(1.6, 1.2, 0.9), plate);
   add(chest, BOX(0.2, 0.9, 0.05), glow, 0, -0.1, 0.46);
@@ -314,8 +317,8 @@ export class EnemyManager {
       scene.add(m);
       this.projPool.push(m);
     }
-    const rockGeo = new THREE.DodecahedronGeometry(0.45, 0);
-    this.rockMat = new THREE.MeshStandardMaterial({ color: 0x2a2220, roughness: 0.8, emissive: 0xff5010, emissiveIntensity: 0.8, flatShading: true });
+    const rockGeo = pebble(0.45, 3);
+    this.rockMat = new THREE.MeshStandardMaterial({ color: 0x2a2220, roughness: 0.8, emissive: 0xff5010, emissiveIntensity: 0.8 });
     this.rocks = [];
     for (let i = 0; i < 6; i++) {
       const m = new THREE.Mesh(rockGeo, this.rockMat);

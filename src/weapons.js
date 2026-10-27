@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { glowTexture } from './textures.js';
+import { rbox } from './shapes.js';
 
 export const WEAPONS = [
   {
@@ -50,14 +51,14 @@ function mats(accent) {
 }
 
 function box(w, h, d, mat, x, y, z, parent) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  const m = new THREE.Mesh(rbox(w, h, d, Math.min(w, h, d) * 0.35), mat);
   m.position.set(x, y, z);
   parent.add(m);
   return m;
 }
 
 function cyl(r, len, mat, x, y, z, parent, seg = 12, rTop = r) {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, r, len, seg), mat);
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, r, len, Math.max(24, seg)), mat);
   m.rotation.x = Math.PI / 2;
   m.position.set(x, y, z);
   parent.add(m);
@@ -68,7 +69,7 @@ function arm(M, parent, gripPos) {
   // A gloved hand on the grip and a forearm running off-screen.
   const hand = box(0.075, 0.09, 0.11, M.glove, gripPos.x, gripPos.y, gripPos.z, parent);
   hand.rotation.x = 0.3;
-  const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.5, 8), M.sleeve);
+  const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.42, 4, 16), M.sleeve);
   fore.position.set(gripPos.x + 0.06, gripPos.y - 0.14, gripPos.z + 0.25);
   fore.rotation.set(1.15, 0, 0.35);
   parent.add(fore);
@@ -118,7 +119,7 @@ function buildModel(def) {
       box(0.06, 0.09, 0.22, M.dark, 0, -0.02, 0.22, g); // stock
       // holo sight
       box(0.05, 0.012, 0.09, M.gun, 0, 0.06, -0.05, g);
-      const frame = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.005, 6, 20), M.gun);
+      const frame = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.005, 10, 40), M.gun);
       frame.position.set(0, 0.095, -0.07);
       g.add(frame);
       box(0.006, 0.006, 0.002, M.glow, 0, 0.095, -0.07, g);
@@ -132,7 +133,7 @@ function buildModel(def) {
       box(0.05, 0.05, 0.75, M.trim, 0, 0.035, -0.55, g);
       box(0.05, 0.03, 0.7, M.dark, 0, -0.035, -0.52, g);
       for (let i = 0; i < 5; i++) {
-        const c = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.012, 8, 20), M.glow.clone());
+        const c = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.012, 12, 40), M.glow.clone());
         c.position.set(0, 0.0, -0.32 - i * 0.11);
         g.add(c);
         coils.push(c);
@@ -146,7 +147,7 @@ function buildModel(def) {
     }
     case 'launcher': {
       box(0.1, 0.12, 0.34, M.gun, 0, 0, 0.02, g);
-      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.18, 6), M.trim);
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.18, 32), M.trim);
       drum.rotation.x = Math.PI / 2;
       drum.position.set(0, -0.01, -0.22);
       drum.name = 'drum';

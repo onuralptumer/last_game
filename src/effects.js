@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { glowTexture, decalTexture } from './textures.js';
+import { rbox, pebble } from './shapes.js';
 
 const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
@@ -163,7 +164,7 @@ export class Effects {
 
     // Explosion fireballs
     this.balls = [];
-    const bgeo = new THREE.IcosahedronGeometry(1, 2);
+    const bgeo = new THREE.IcosahedronGeometry(1, 4);
     for (let i = 0; i < 6; i++) {
       const m = new THREE.Mesh(
         bgeo,
@@ -197,7 +198,7 @@ export class Effects {
 
     // Gibs
     this.gibs = [];
-    const ggeos = [new THREE.TetrahedronGeometry(0.18, 0), new THREE.BoxGeometry(0.22, 0.12, 0.16), new THREE.OctahedronGeometry(0.14, 0)];
+    const ggeos = [pebble(0.13, 1), rbox(0.22, 0.12, 0.16, 0.05), pebble(0.1, 5)];
     this.gibMat = new THREE.MeshStandardMaterial({ color: 0x15100f, roughness: 0.5, metalness: 0.3, emissive: 0xff3010, emissiveIntensity: 0.6 });
     for (let i = 0; i < 90; i++) {
       const m = new THREE.Mesh(ggeos[i % 3], this.gibMat);

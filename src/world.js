@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { boxCollider, cylCollider, WALL_RADIUS } from './physics.js';
 import { floorTextures, wallTextures, runeTexture, crateTexture } from './textures.js';
+import { rbox, taper, merged, pebble } from './shapes.js';
 
 const MOON_DIR = new THREE.Vector3(-0.35, 0.62, -0.7).normalize();
 
@@ -220,36 +221,30 @@ export class World {
     wallMat.bumpMap = concrete.bumpMap.clone();
     wallMat.bumpMap.repeat.set(1, 2.5);
     wallMat.bumpMap.needsUpdate = true;
-    const geo = new THREE.BoxGeometry(w, 1, 1.5);
-    geo.translate(0, 0.5, 0);
-    const inst = new THREE.InstancedMesh(geo, wallMat, segs);
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
+    const blocks = [];
     for (let i = 0; i < segs; i++) {
       const a = (i / segs) * Math.PI * 2;
       const h = 13 + Math.abs(Math.sin(i * 1.7) * 5) + (i % 7 === 0 ? -4 : 0);
-      p.set(Math.cos(a) * R, 0, Math.sin(a) * R);
+      p.set(Math.cos(a) * R, h / 2, Math.sin(a) * R);
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a + Math.PI / 2);
-      s.set(1, h, 1);
-      m.compose(p, q, s);
-      inst.setMatrixAt(i, m);
+      blocks.push({ geo: rbox(w, h, 1.5, 0.5, 3), matrix: new THREE.Matrix4().compose(p, q, s) });
     }
-    inst.castShadow = true;
-    inst.receiveShadow = true;
-    this.scene.add(inst);
+    const wall = new THREE.Mesh(merged(blocks), wallMat);
+    wall.castShadow = true;
+    wall.receiveShadow = true;
+    this.scene.add(wall);
 
     // Buttresses
-    const bgeo = new THREE.BoxGeometry(2.2, 1, 3.2);
-    bgeo.translate(0, 0.5, 0);
     const bcount = 16;
-    const binst = new THREE.InstancedMesh(bgeo, concrete, bcount);
+    const bparts = [];
     for (let i = 0; i < bcount; i++) {
       const a = ((i + 0.5) / bcount) * Math.PI * 2;
       const rr = R - 1.4;
-      p.set(Math.cos(a) * rr, 0, Math.sin(a) * rr);
+      const bh = 15 + (i % 3) * 1.5;
+      p.set(Math.cos(a) * rr, bh / 2, Math.sin(a) * rr);
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a + Math.PI / 2);
-      s.set(1, 15 + (i % 3) * 1.5, 1);
-      m.compose(p, q, s);
-      binst.setMatrixAt(i, m);
+      bparts.push({ geo: taper(rbox(2.2, bh, 3.2, 0.7, 4), 0.75), matrix: new THREE.Matrix4().compose(p, q, s) });
       // Two cylinders approximate the buttress footprint so the player can't walk into it.
       const tx = -Math.sin(a), tz = Math.cos(a);
       const cr = rr - 0.75;
@@ -257,6 +252,7 @@ export class World {
         this.colliders.push(cylCollider(Math.cos(a) * cr + tx * off, Math.sin(a) * cr + tz * off, 0.85, 0, 15));
       }
     }
+    const binst = new THREE.Mesh(merged(bparts), concrete);
     binst.castShadow = binst.receiveShadow = true;
     this.scene.add(binst);
 
@@ -286,12 +282,12 @@ export class World {
       const end = new THREE.Vector3(Math.cos(a) * 8, 27, Math.sin(a) * 8);
       const curve = new THREE.QuadraticBezierCurve3(start, ctrl, end);
       const broken = [2, 5, 9].includes(i) ? 0.45 + (i % 3) * 0.08 : 1;
-      const tube = new THREE.TubeGeometry(new PartialCurve(curve, broken), 28, 0.7, 4, false);
+      const tube = new THREE.TubeGeometry(new PartialCurve(curve, broken), 48, 0.7, 14, false);
       const mesh = new THREE.Mesh(tube, darkStone);
       mesh.castShadow = true;
       this.scene.add(mesh);
     }
-    const crown = new THREE.Mesh(new THREE.TorusGeometry(8, 0.8, 6, 48, Math.PI * 1.45), darkStone);
+    const crown = new THREE.Mesh(new THREE.TorusGeometry(8, 0.8, 16, 96, Math.PI * 1.45), darkStone);
     crown.rotation.x = Math.PI / 2;
     crown.position.y = 27;
     crown.castShadow = true;
@@ -300,7 +296,7 @@ export class World {
     for (let i = 0; i < 5; i++) {
       const a = i * 1.1;
       const len = 4 + (i % 3) * 3;
-      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, len, 4), metal);
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, len, 8), metal);
       c.position.set(Math.cos(a) * 8, 27 - len / 2, Math.sin(a) * 8);
       this.scene.add(c);
     }
@@ -309,10 +305,14 @@ export class World {
   _buildCenter() {
     const { darkStone, metal, cyanGlow } = this._materials();
     // Dais
-    const dais = this._mesh(new THREE.CylinderGeometry(6, 6.3, 0.5, 48), darkStone, 0, 0.25, 0);
+    const daisProfile = [
+      new THREE.Vector2(0, 0.5), new THREE.Vector2(5.75, 0.5), new THREE.Vector2(5.98, 0.46), new THREE.Vector2(6.12, 0.36),
+      new THREE.Vector2(6.22, 0.2), new THREE.Vector2(6.28, 0.06), new THREE.Vector2(6.3, 0),
+    ];
+    const dais = this._mesh(new THREE.LatheGeometry(daisProfile, 96), darkStone, 0, 0, 0);
     dais.castShadow = false;
     this.colliders.push(cylCollider(0, 0, 6.15, 0, 0.5));
-    const inlay = new THREE.Mesh(new THREE.TorusGeometry(4.6, 0.04, 6, 96), cyanGlow);
+    const inlay = new THREE.Mesh(new THREE.TorusGeometry(4.6, 0.04, 8, 128), cyanGlow);
     inlay.rotation.x = Math.PI / 2;
     inlay.position.y = 0.52;
     this.scene.add(inlay);
@@ -328,8 +328,7 @@ export class World {
       emissiveMap: runes,
       emissiveIntensity: 3,
     });
-    const mono = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 1.3, 9, 4, 1), monoMat);
-    mono.rotation.y = Math.PI / 4;
+    const mono = new THREE.Mesh(taper(rbox(2.2, 9, 2.2, 0.45, 5), 0.58), monoMat);
     mono.position.y = 5;
     mono.castShadow = true;
     mono.receiveShadow = true;
@@ -339,7 +338,7 @@ export class World {
 
     // Floating capstone and orbiting rings
     const cap = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.9, 0),
+      new THREE.IcosahedronGeometry(0.75, 3),
       new THREE.MeshStandardMaterial({ color: 0x000000, emissive: 0x9ff0ff, emissiveIntensity: 6 })
     );
     cap.position.y = 11;
@@ -347,14 +346,14 @@ export class World {
     this.capstone = cap;
     this.rings = [];
     for (let i = 0; i < 3; i++) {
-      const r = new THREE.Mesh(new THREE.TorusGeometry(2.2 + i * 0.7, 0.03, 6, 96), cyanGlow);
+      const r = new THREE.Mesh(new THREE.TorusGeometry(2.2 + i * 0.7, 0.03, 8, 128), cyanGlow);
       r.position.y = 6 + i * 1.6;
       this.scene.add(r);
       this.rings.push(r);
     }
     // Fragments orbiting
     this.fragments = [];
-    const fragGeo = new THREE.TetrahedronGeometry(0.25, 0);
+    const fragGeo = new THREE.IcosahedronGeometry(0.2, 1);
     for (let i = 0; i < 14; i++) {
       const f = new THREE.Mesh(fragGeo, metal);
       f.userData = { a: Math.random() * Math.PI * 2, r: 2.4 + Math.random() * 2, y: 3 + Math.random() * 7, s: 0.2 + Math.random() * 0.4 };
@@ -374,15 +373,15 @@ export class World {
 
   _buildPillars() {
     const { concrete, darkStone } = this._materials();
-    const geo = new THREE.CylinderGeometry(1.1, 1.25, 17, 8);
-    const base = new THREE.BoxGeometry(3, 1.2, 3);
-    const capital = new THREE.BoxGeometry(2.8, 0.9, 2.8);
+    const geo = new THREE.CylinderGeometry(1.1, 1.25, 17, 32);
+    const base = rbox(3, 1.2, 3, 0.4);
+    const capital = rbox(2.8, 0.9, 2.8, 0.35);
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
       const x = Math.cos(a) * 21, z = Math.sin(a) * 21;
       const broken = i === 3 || i === 6;
       const h = broken ? 6.5 + i * 0.3 : 17;
-      const p = this._mesh(broken ? new THREE.CylinderGeometry(1.0, 1.25, h, 8) : geo, concrete, x, h / 2, z);
+      const p = this._mesh(broken ? new THREE.CylinderGeometry(1.0, 1.25, h, 32) : geo, concrete, x, h / 2, z);
       p.rotation.y = a;
       const b = this._mesh(base, darkStone, x, 0.6, z);
       b.rotation.y = a;
@@ -391,7 +390,7 @@ export class World {
         c.rotation.y = a;
       } else {
         // fallen chunk next to the broken pillar
-        const chunk = this._mesh(new THREE.CylinderGeometry(1.05, 1.1, 3.4, 8), concrete, x + Math.cos(a + 1.4) * 2.6, 1.05, z + Math.sin(a + 1.4) * 2.6);
+        const chunk = this._mesh(new THREE.CylinderGeometry(1.05, 1.1, 3.4, 32), concrete, x + Math.cos(a + 1.4) * 2.6, 1.05, z + Math.sin(a + 1.4) * 2.6);
         chunk.rotation.set(Math.PI / 2, 0, a + 0.4);
         // The chunk lies on its side; cover its whole length with three cylinders.
         const ax = -Math.sin(a + 0.4), az = Math.cos(a + 0.4);
@@ -408,10 +407,10 @@ export class World {
     // Low barricades on the cardinal axes.
     const addWall = (cx, cz, alongZ) => {
       const w = alongZ ? 1 : 6, d = alongZ ? 6 : 1, h = 1.4;
-      this._mesh(new THREE.BoxGeometry(w, h, d), darkStone, cx, h / 2, cz);
-      const trim = this._mesh(new THREE.BoxGeometry(w + 0.1, 0.12, d + 0.1), metal, cx, h + 0.06, cz);
+      this._mesh(rbox(w, h, d, 0.3), darkStone, cx, h / 2, cz);
+      const trim = this._mesh(rbox(w - 0.1, 0.14, d - 0.1, 0.06), metal, cx, h + 0.02, cz);
       trim.castShadow = false;
-      const glow = new THREE.Mesh(new THREE.BoxGeometry(alongZ ? 1.02 : 5.2, 0.05, alongZ ? 5.2 : 1.02), amberGlow);
+      const glow = new THREE.Mesh(rbox(alongZ ? 1.02 : 5.2, 0.05, alongZ ? 5.2 : 1.02, 0.024), amberGlow);
       glow.position.set(cx, 0.9, cz);
       this.scene.add(glow);
       this.colliders.push(boxCollider(cx - w / 2, 0, cz - d / 2, cx + w / 2, h + 0.12, cz + d / 2));
@@ -421,7 +420,7 @@ export class World {
     addWall(0, 12, false);
     addWall(0, -12, false);
 
-    const crateGeo = new THREE.BoxGeometry(1.6, 1.6, 1.6);
+    const crateGeo = rbox(1.6, 1.6, 1.6, 0.14);
     const addCrate = (x, z, y = 0, rot = 0) => {
       const c = this._mesh(crateGeo, crate, x, y + 0.8, z);
       c.rotation.y = rot;
@@ -444,13 +443,13 @@ export class World {
     const { concrete, darkStone, metal, amberGlow } = this._materials();
     const build = (cx, cz, dir) => {
       const s = 8, h = 3;
-      this._mesh(new THREE.BoxGeometry(s, h, s), concrete, cx, h / 2, cz);
-      const top = this._mesh(new THREE.BoxGeometry(s + 0.3, 0.2, s + 0.3), metal, cx, h + 0.1, cz);
+      this._mesh(rbox(s, h, s, 0.45), concrete, cx, h / 2, cz);
+      const top = this._mesh(rbox(s + 0.3, 0.2, s + 0.3, 0.09), metal, cx, h + 0.1, cz);
       top.castShadow = false;
       this.colliders.push(boxCollider(cx - s / 2, 0, cz - s / 2, cx + s / 2, h + 0.2, cz + s / 2));
       // corner beacons
       for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-        const b = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.5, 0.25), amberGlow);
+        const b = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.26, 4, 12), amberGlow);
         b.position.set(cx + ox * (s / 2 - 0.2), h + 0.45, cz + oz * (s / 2 - 0.2));
         this.scene.add(b);
       }
@@ -463,7 +462,7 @@ export class World {
         const x1 = dir > 0 ? edge : edge + len;
         const y = k * rise + 0.2;
         const zc = cz - dir * 1.2;
-        const st = this._mesh(new THREE.BoxGeometry(x1 - x0, y, 4), darkStone, (x0 + x1) / 2, y / 2, zc);
+        const st = this._mesh(rbox(x1 - x0, y, 4, 0.12), darkStone, (x0 + x1) / 2, y / 2, zc);
         st.castShadow = k === 1;
         this.colliders.push(boxCollider(x0, 0, zc - 2, x1, y, zc + 2));
       }
@@ -508,18 +507,18 @@ export class World {
       group.lookAt(0, 0, 0);
       this.scene.add(group);
       // Arch frame
-      const colGeo = new THREE.BoxGeometry(0.8, 6, 0.9);
+      const colGeo = rbox(0.8, 6, 0.9, 0.3);
       for (const sx of [-2.1, 2.1]) {
         const c = new THREE.Mesh(colGeo, darkStone);
         c.position.set(sx, 3, 0.2);
         c.castShadow = true;
         group.add(c);
       }
-      const lintel = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.9, 1.0), darkStone);
+      const lintel = new THREE.Mesh(rbox(5.2, 0.9, 1.0, 0.35), darkStone);
       lintel.position.set(0, 6.3, 0.2);
       lintel.castShadow = true;
       group.add(lintel);
-      const grate = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.15, 1.2), metal);
+      const grate = new THREE.Mesh(rbox(5.0, 0.15, 1.2, 0.07), metal);
       grate.position.set(0, 0.07, 0.4);
       group.add(grate);
       const portal = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 5.6), portalMat.clone());
@@ -575,14 +574,15 @@ export class World {
     spots.forEach(([x, z], i) => {
       const y = 9.5;
       const chainLen = 26 - y;
-      const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, chainLen, 4), metal);
+      const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, chainLen, 8), metal);
       chain.position.set(x, y + chainLen / 2, z);
       this.scene.add(chain);
-      const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.8, 0.6, 8, 1, true), metal);
-      housing.position.set(x, y + 0.2, z);
+      const housing = new THREE.Mesh(new THREE.SphereGeometry(0.8, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.45), metal);
+      housing.position.set(x, y - 0.12, z);
+      housing.scale.set(1, 0.75, 1);
       housing.material.side = THREE.DoubleSide;
       this.scene.add(housing);
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), amberGlow.clone());
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 20, 14), amberGlow.clone());
       bulb.position.set(x, y - 0.05, z);
       this.scene.add(bulb);
       const light = new THREE.PointLight(0xff9a48, 90, 26, 1.5);
@@ -647,7 +647,7 @@ export class World {
 
   _buildRubble() {
     const { concrete } = this._materials();
-    const geo = new THREE.DodecahedronGeometry(0.4, 0);
+    const geo = pebble(0.4);
     const count = 140;
     const inst = new THREE.InstancedMesh(geo, concrete, count);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), e = new THREE.Euler();
